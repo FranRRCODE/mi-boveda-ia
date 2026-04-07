@@ -9,49 +9,48 @@ import google.generativeai as genai
 import json
 import re
 
-# --- 1. CONFIGURACIÓN DE NUBE Y IA ---
+# --- 1. CONFIGURACIÓN DE SEGURIDAD Y NUBE ---
 try:
+    # Verificamos si las llaves existen antes de intentar usarlas
+    if "GEMINI_API_KEY" not in st.secrets:
+        st.error("❌ No encontré 'GEMINI_API_KEY' en tus Secrets de Streamlit.")
+        st.stop()
+        
     URL_NUBE = st.secrets["SUPABASE_URL"]
     KEY_NUBE = st.secrets["SUPABASE_KEY"]
     GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
     
+    # Inicializar Clientes
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
-    
-    # Configuración de Gemini 1.5 Flash (El más rápido y capaz para JSON)
     genai.configure(api_key=GEMINI_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    model = genai.GenerativeModel('gemini-1.5-flash')
     
 except Exception as e:
-    st.error(f"❌ Error de configuración: {e}")
+    st.error(f"❌ Error al cargar configuraciones: {e}")
     st.stop()
 
-# --- 2. UBICACIÓN REAL POR IP (DETECTA TU CIUDAD) ---
+# --- 2. UBICACIÓN REAL POR IP ---
 @st.cache_data(ttl=3600)
 def obtener_geo_real():
     try:
-        # Detectar IP real tras el proxy de Streamlit
+        # Detectar IP real tras proxy
         headers = st.context.headers
         user_ip = headers.get("X-Forwarded-For", "").split(",")[0]
+        res = requests.get(f"http://ip-api.com/json/{user_ip if user_ip else ''}").json()
         
-        if user_ip:
-            res = requests.get(f"http://ip-api.com/json/{user_ip}").json()
-        else:
-            res = requests.get("http://ip-api.com/json/").json()
-            
         pais_code = res.get("countryCode", "CL")
-        # Diccionario de Monedas
         monedas = {"CL": "CLP", "MX": "MXN", "CO": "COP", "AR": "ARS", "ES": "EUR", "US": "USD", "PE": "PEN"}
         
         return {
             "ciudad": res.get("city", "Santiago"),
             "pais": res.get("country", "Chile"),
-            "moneda": monedas.get(pais_code, "USD"),
+            "moneda": monedas.get(pais_code, "CLP"),
             "ip": res.get("query", "0.0.0.0")
         }
     except:
-        return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP", "ip": "Desconocida"}
+        return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP", "ip": "Error IP"}
 
-# --- 3. MOTOR DE IA (ANÁLISIS Y OFERTAS LOCALES) ---
+# --- 3. MOTOR DE IA CON HACKS LOCALES ---
 def auditoria_ia_local(row, total_gastos_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
@@ -59,152 +58,107 @@ def auditoria_ia_local(row, total_gastos_mes, geo):
     impacto = (monto / total_gastos_mes) * 100 if total_gastos_mes > 0 else 0
     
     prompt = f"""
-    Eres un Mentor Financiero experto en {geo['ciudad']}, {geo['pais']}.
-    Analiza este gasto: "{desc}" por {moneda} {monto}. Impacto: {impacto:.1f}%.
+    Eres un Mentor Financiero sarcástico en {geo['ciudad']}, {geo['pais']}.
+    Analiza: "{desc}" por {moneda} {monto}. Impacto: {impacto:.1f}%.
 
     Responde ESTRICTAMENTE en JSON con:
     {{
-        "tipo": "Categoría Creativa",
-        "analisis": "Frase de impacto sobre el gasto",
-        "hack_local": "Dime tiendas, ferias o apps REALES en {geo['ciudad']} donde ahorrar en esto",
-        "color": "red" (innecesario), "green" (necesario), "orange" (transporte/logistica), "blue" (otros)
+        "tipo": "Categoría",
+        "analisis": "Análisis corto",
+        "hack_local": "Menciona lugares específicos como Ferias Libres, Lider, Mayorista 10 o apps como Tuu, si estás en {geo['ciudad']}",
+        "color": "red" o "green" o "orange" o "blue"
     }}
     """
 
     try:
         response = model.generate_content(prompt)
+        # Extraer JSON
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
-        else: raise ValueError("Respuesta inválida")
+        else: raise ValueError("Respuesta no es JSON")
     except Exception as e:
+        # Si la API falla por la llave, esto te lo dirá
         return {
-            "tipo": "Error de IA",
-            "analisis": f"Error técnico: {str(e)[:40]}",
-            "hack_local": f"En {geo['ciudad']} siempre es mejor comparar precios antes de comprar.",
-            "color": "blue"
+            "tipo": "Error de Conexión",
+            "analisis": "La IA no responde.",
+            "hack_local": f"⚠️ Error: {str(e)}. Revisa tu API KEY en Google AI Studio.",
+            "color": "red"
         }
 
-# --- 4. SEGURIDAD: LOGIN CON CAPTCHA ---
+# --- 4. LOGIN CON CAPTCHA ---
 def mostrar_login():
     st.markdown("<h1 style='text-align: center;'>🔐 Bóveda IA Mentor Pro</h1>", unsafe_allow_html=True)
     
-    # Generar números aleatorios para el captcha si no existen
     if 'n1' not in st.session_state:
-        st.session_state.n1 = random.randint(1, 10)
-        st.session_state.n2 = random.randint(1, 10)
+        st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
     with st.form("login_form"):
         u = st.text_input("Usuario Master")
         p = st.text_input("Contraseña", type="password")
+        captcha = st.number_input(f"Captcha: {st.session_state.n1} + {st.session_state.n2}?", step=1)
         
-        # El Captcha
-        st.markdown(f"**Verificación de Seguridad:**")
-        resultado_usuario = st.number_input(f"¿Cuánto es {st.session_state.n1} + {st.session_state.n2}?", step=1)
-        
-        if st.form_submit_button("Acceder al Sistema"):
-            if u == "admin" and p == "1234567899" and resultado_usuario == (st.session_state.n1 + st.session_state.n2):
+        if st.form_submit_button("Acceder"):
+            if u == "admin" and p == "1234567899" and captcha == (st.session_state.n1 + st.session_state.n2):
                 st.session_state.auth = True
-                st.success("Acceso concedido")
                 st.rerun()
             else:
-                st.error("Credenciales incorrectas o Captcha fallido.")
-                # Cambiar captcha tras error
-                st.session_state.n1 = random.randint(1, 10)
-                st.session_state.n2 = random.randint(1, 10)
+                st.error("Error: Revisa usuario, clave o captcha.")
+                st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
-# --- 5. APP PRINCIPAL ---
+# --- 5. MAIN APP ---
 def main():
     geo = obtener_geo_real()
-    
     st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
-    st.sidebar.info(f"📍 Ubicación detectada por IP")
+    st.sidebar.caption(f"📍 IP Detectada: {geo['ip']}")
     
-    moneda_selec = st.sidebar.selectbox(
-        "Moneda de Trabajo:", 
-        ["CLP", "USD", "MXN", "EUR", "COP", "PEN"], 
-        index=["CLP", "USD", "MXN", "EUR", "COP", "PEN"].index(geo['moneda']) if geo['moneda'] in ["CLP", "USD", "MXN", "EUR", "COP", "PEN"] else 1
-    )
+    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR", "COP", "PEN"], index=0 if geo['moneda']=="CLP" else 1)
     
-    menu = st.sidebar.radio("Menú", ["➕ Registro Rápido", "🧠 Auditoría IA Local", "📊 Dashboard", "⚙️ Gestión"])
+    menu = st.sidebar.radio("Menú", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard"])
 
-    # Cargar Datos de Supabase
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
-    if menu == "➕ Registro Rápido":
+    if menu == "➕ Registro":
         st.header(f"📥 Registro en {geo['ciudad']}")
         with st.form("reg", clear_on_submit=True):
             tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
-            cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
+            cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Otros"])
             monto = st.number_input(f"Monto ({moneda_selec})", min_value=0.0)
-            desc = st.text_input("¿Qué compraste? (Ej: Supermercado Lider)")
+            desc = st.text_input("Descripción (Ej: Supermercado Lider)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    supabase.table("transacciones").insert({
-                        "tipo": tipo, "categoria": cat, "monto": float(monto), 
-                        "descripcion": desc, "ciudad": geo['ciudad'], 
-                        "pais": geo['pais'], "moneda": moneda_selec
-                    }).execute()
-                    st.toast("Guardado en la nube ☁️")
+                    supabase.table("transacciones").insert({"tipo": tipo, "categoria": cat, "monto": float(monto), "descripcion": desc, "ciudad": geo['ciudad'], "pais": geo['pais'], "moneda": moneda_selec}).execute()
+                    st.success("✅ Guardado.")
                     st.rerun()
 
-    elif menu == "🧠 Auditoría IA Local":
-        st.header(f"🕵️ Análisis Experto para {geo['ciudad']}")
+    elif menu == "🧠 Auditoría IA":
+        st.header(f"🕵️ Análisis para {geo['ciudad']}")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
-            
-            st.chat_message("assistant").write(f"Hola, he analizado tus gastos según los precios actuales en **{geo['ciudad']}**:")
-            
-            for _, row in df_g.head(10).iterrows():
-                with st.spinner(f"Consultando ofertas en {geo['ciudad']}..."):
+            for _, row in df_g.head(5).iterrows():
+                with st.spinner("Gemini analizando..."):
                     info = auditoria_ia_local(row, total, geo)
-                
                 with st.expander(f"🔍 {row['descripcion']} - {row['moneda']} {row['monto']:,.0f}"):
                     st.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
-                    st.write(info.get('analisis', '...'))
-                    
-                    st.markdown(f"**📍 Hack Local ({geo['ciudad']}):**")
+                    st.write(info.get('analisis', 'Sin análisis.'))
+                    st.markdown(f"**📍 Hack para {geo['ciudad']}:**")
                     color = info.get('color', 'blue')
-                    hack = info.get('hack_local', 'Revisa ofertas en tu barrio.')
-                    
+                    hack = info.get('hack_local', 'No hay datos.')
                     if color == "red": st.error(hack)
                     elif color == "orange": st.warning(hack)
                     elif color == "green": st.success(hack)
                     else: st.info(hack)
         else:
-            st.warning("No hay registros para auditar.")
+            st.info("Registra un gasto primero.")
 
     elif menu == "📊 Dashboard":
-        st.header("📊 Inteligencia de Datos")
+        st.header("📊 Resumen")
         if not df.empty:
-            df_m = df[df['moneda'] == moneda_selec]
-            if not df_m.empty:
-                st.plotly_chart(px.pie(df_m[df_m['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
-                st.dataframe(df_m, use_container_width=True)
+            st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
 
-    elif menu == "⚙️ Gestión":
-        st.header("🛠️ Modificar Datos")
-        if not df.empty:
-            opc = {f"{r['descripcion']} ({r['id']})": r['id'] for _, r in df.iterrows()}
-            id_sel = opc[st.selectbox("Selecciona transacción:", list(opc.keys()))]
-            reg = df[df['id'] == id_sel].iloc[0]
-            with st.form("edit"):
-                n_m = st.number_input("Monto", value=float(reg['monto']))
-                n_d = st.text_input("Descripción", value=reg['descripcion'])
-                if st.form_submit_button("Actualizar"):
-                    supabase.table("transacciones").update({"monto": n_m, "descripcion": n_d}).eq("id", id_sel).execute()
-                    st.rerun()
-                if st.form_submit_button("Eliminar Gasto"):
-                    supabase.table("transacciones").delete().eq("id", id_sel).execute()
-                    st.rerun()
-
-# --- CONTROL DE FLUJO ---
-if 'auth' not in st.session_state:
-    st.session_state.auth = False
-
-if not st.session_state.auth:
-    mostrar_login()
-else:
-    main()
+# --- FLUJO ---
+if 'auth' not in st.session_state: st.session_state.auth = False
+if not st.session_state.auth: mostrar_login()
+else: main()
