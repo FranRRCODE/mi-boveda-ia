@@ -5,8 +5,9 @@ import plotly.express as px
 import requests
 import random
 import time
-from openai import OpenAI # <--- Cambiamos a OpenAI
+from groq import Groq # <--- Nueva IA gratuita
 import json
+import re
 
 # --- 1. CONFIGURACIÓN INICIAL ---
 st.set_page_config(page_title="Bóveda IA Mentor Pro", page_icon="🔐", layout="wide")
@@ -15,77 +16,79 @@ def inicializar_servicios():
     try:
         URL_NUBE = st.secrets["SUPABASE_URL"]
         KEY_NUBE = st.secrets["SUPABASE_KEY"]
-        GPT_KEY = st.secrets["OPENAI_API_KEY"] # <--- Usar OpenAI Key
+        GROQ_KEY = st.secrets["GROQ_API_KEY"] # <--- Usar Groq Key
         
         sb = create_client(URL_NUBE, KEY_NUBE)
-        # Inicializar Cliente de OpenAI
-        client_gpt = OpenAI(api_key=GPT_KEY)
+        # Inicializar Cliente de Groq
+        client_groq = Groq(api_key=GROQ_KEY)
         
-        return sb, client_gpt
+        return sb, client_groq
     except Exception as e:
         st.error(f"Error de configuración: {e}")
         st.stop()
 
-supabase, gpt = inicializar_servicios()
+supabase, ai_groq = inicializar_servicios()
 
 # --- 2. UBICACIÓN POR IP REAL ---
 @st.cache_data(ttl=3600)
 def obtener_geo():
     try:
         res = requests.get("https://ipapi.co/json/").json()
-        return {
-            "ciudad": res.get("city", "Santiago"),
-            "pais": res.get("country_name", "Chile"),
-            "moneda": "CLP" if res.get("country") == "CL" else "USD"
-        }
+        return {"ciudad": res.get("city", "Santiago"), "pais": "Chile", "moneda": "CLP"}
     except:
         return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
 
-# --- 3. MOTOR DE IA (GPT-4o-mini EXPERT SANTIAGO) ---
-def auditoria_ia_gpt(row, total_mes, geo):
+# --- 3. MOTOR DE IA (LLAMA 3.1 VIA GROQ - GRATIS Y RÁPIDO) ---
+def auditoria_ia_groq(row, total_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
     ciudad = geo['ciudad']
     
-    # Prompt de alta precisión para Santiago
-    prompt_sistema = f"""
-    Eres un Mentor Financiero 'Tiburón' experto en la economía de {ciudad}, Chile. 
-    Analiza los gastos de forma sarcástica, directa y muy útil. 
-    Menciona comercios reales: La Vega Central, Lo Valledor, Mayorista 10, Alvi, ferias libres.
-    Responde SIEMPRE en formato JSON puro.
-    """
-    
-    prompt_usuario = f"""
-    Analiza este gasto: "{desc}" por ${monto} CLP en {ciudad}.
-    
-    Responde en JSON:
+    prompt = f"""
+    Eres un Mentor Financiero experto en la economía de {ciudad}, Chile. 
+    Analiza este gasto: "{desc}" por ${monto} CLP. 
+    Impacto en el presupuesto: {(monto/total_mes*100):.1f}%.
+
+    TAREA:
+    - Evalúa si el precio es bueno para {ciudad}.
+    - Menciona comercios reales de Santiago: La Vega Central, Lo Valledor, Mayorista 10, Alvi, ferias libres.
+    - Da un plan de ahorro real de 3 pasos.
+
+    RESPONDE ÚNICAMENTE EN FORMATO JSON PLANO:
     {{
-        "tipo": "Categoría exacta",
-        "veredicto": "Sarcasmo financiero sobre el precio",
-        "analisis": "Análisis profundo de por qué es caro/barato en Santiago",
-        "donde_ahorrar": "Lista de lugares REALES en Santiago con mejores precios",
+        "tipo": "Categoría",
+        "veredicto": "Sarcasmo chileno",
+        "analisis": "Análisis profundo para Santiago",
+        "donde_ahorrar": "Lista de lugares REALES en Santiago",
         "plan": ["Paso 1", "Paso 2", "Paso 3"],
         "color": "red" (caro), "green" (ahorro), "orange" (normal)
     }}
     """
     
     try:
-        response = gpt.chat.completions.create(
-            model="gpt-4o-mini", # El modelo más rápido y barato de OpenAI
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": prompt_usuario}
-            ],
-            response_format={ "type": "json_object" } # Forzamos respuesta JSON
+        # Usamos Llama 3.1 70B (Potente y gratis en Groq)
+        chat_completion = ai_groq.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.1-70b-versatile",
+            temperature=0.5,
         )
-        return json.loads(response.choices[0].message.content)
+        
+        # Limpieza de JSON
+        texto_ia = chat_completion.choices[0].message.content
+        match = re.search(r'\{.*\}', texto_ia, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        else:
+            raise ValueError()
+
     except Exception as e:
+        # Fallback manual si Groq falla (poco probable)
         return {
-            "tipo": "Error",
-            "veredicto": "GPT Offline",
-            "analisis": f"Error técnico: {str(e)[:50]}",
-            "donde_ahorrar": "📍 En Santiago: Prefiere ferias libres o el Mayorista 10.",
-            "plan": ["Reintentar luego", "Verificar API Key"],
+            "tipo": "Gasto Santiago",
+            "veredicto": "Análisis Manual",
+            "analisis": f"Registraste ${monto} en {desc}.",
+            "donde_ahorrar": "📍 Santiago: Anda a La Vega Central si es comida o Mayorista 10 para abarrotes.",
+            "plan": ["Comparar precios en ferias", "Usar marcas Acuenta", "Evitar el Jumbo"],
             "color": "blue"
         }
 
@@ -98,23 +101,23 @@ def login():
     with st.container(border=True):
         u = st.text_input("Usuario Master")
         p = st.text_input("Contraseña", type="password")
-        cap = st.number_input(f"Captcha: ¿Cuánto es {st.session_state.n1} + {st.session_state.n2}?", step=1, value=0)
+        cap = st.number_input(f"Captcha: {st.session_state.n1} + {st.session_state.n2}?", step=1, value=0)
         
-        if st.button("Ingresar", use_container_width=True):
+        if st.button("Ingresar al Sistema", use_container_width=True):
             if u == "admin" and p == "1234567899" and cap == (st.session_state.n1 + st.session_state.n2):
                 st.session_state.auth = True
                 st.rerun()
             else:
-                st.error("Acceso denegado.")
+                st.error("Error: Datos incorrectos.")
                 st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
-# --- 5. APLICACIÓN PRINCIPAL ---
+# --- 5. APP PRINCIPAL ---
 def main():
     geo = obtener_geo()
     st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
     st.sidebar.info(f"📍 Detectado en **{geo['pais']}**")
     
-    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría GPT", "📊 Dashboard"])
+    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA Gratis", "📊 Dashboard"])
 
     # Cargar datos desde Supabase
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
@@ -125,7 +128,7 @@ def main():
         with st.form("reg", clear_on_submit=True):
             cat = st.selectbox("Categoría", ["Comida", "Transporte", "Vivienda", "Ocio", "Otros"])
             monto = st.number_input("Monto (CLP)", min_value=0)
-            desc = st.text_input("Descripción (Ej: Carne en el Lider)")
+            desc = st.text_input("Descripción (Ej: Lider, Uber, Feria)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
                     supabase.table("transacciones").insert({
@@ -135,37 +138,36 @@ def main():
                     st.success("✅ Gasto registrado.")
                     st.rerun()
 
-    elif menu == "🧠 Auditoría GPT":
-        st.header(f"🕵️ Auditoría Pro con OpenAI: {geo['ciudad']}")
+    elif menu == "🧠 Auditoría IA Gratis":
+        st.header(f"🕵️ Auditoría con Llama 3.1: {geo['ciudad']}")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
             
-            st.chat_message("assistant").write(f"Soy tu mentor GPT en **{geo['ciudad']}**. He analizado tus gastos:")
+            st.chat_message("assistant").write(f"Soy tu mentor de **{geo['ciudad']}**. Analicemos tus gastos locales con IA gratuita:")
             
             for _, row in df_g.head(10).iterrows():
-                with st.spinner(f"GPT analizando {row['descripcion']}..."):
-                    info = auditoria_ia_gpt(row, total, geo)
+                with st.spinner(f"IA analizando {row['descripcion']}..."):
+                    info = auditoria_ia_groq(row, total, geo)
                 
                 with st.expander(f"🔍 {row['descripcion']} - ${row['monto']:,.0f}"):
                     c1, c2 = st.columns([3, 1])
                     c1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
                     c2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
                     
-                    st.write(info.get('analisis', 'Sin análisis.'))
+                    st.write(info.get('analisis', '...'))
+                    st.markdown(f"**📍 Hack en {geo['ciudad']}:**")
                     
-                    st.markdown(f"**📍 Hacks para {geo['ciudad']}:**")
                     color = info.get('color', 'blue')
                     hack = info.get('donde_ahorrar', 'Busca picadas.')
-                    
                     if color == "red": st.error(hack)
                     elif color == "orange": st.warning(hack)
                     else: st.success(hack)
                     
                     st.markdown("**🚀 Plan de Acción:**")
-                    for p in info.get('plan', []): st.write(f"- {p}")
+                    for p in info.get('plan', ["Controlar gasto"]): st.write(f"- {p}")
         else:
-            st.info("Registra un gasto para empezar.")
+            st.info("Sin gastos registrados.")
 
     elif menu == "📊 Dashboard":
         if not df.empty:
