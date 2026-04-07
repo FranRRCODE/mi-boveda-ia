@@ -9,7 +9,7 @@ import google.generativeai as genai
 import json
 import re
 
-# --- 1. CONFIGURACIÓN INICIAL ---
+# --- 1. CONFIGURACIÓN INICIAL (DEBE SER LO PRIMERO) ---
 st.set_page_config(page_title="Bóveda IA Mentor", page_icon="🔐")
 
 def cargar_config():
@@ -21,16 +21,15 @@ def cargar_config():
         genai.configure(api_key=g_key)
         return sb
     except Exception as e:
-        st.error(f"Configuración fallida: {e}")
+        st.error(f"Error en Secrets: {e}")
         st.stop()
 
 supabase = cargar_config()
 
-# --- 2. UBICACIÓN POR IP (MÉTODO ULTRA-ESTABLE) ---
+# --- 2. UBICACIÓN POR IP (PARA SANTIAGO) ---
 @st.cache_data(ttl=3600)
 def obtener_geo():
     try:
-        # Usamos una API simple para obtener la IP del usuario
         res = requests.get("https://ipapi.co/json/").json()
         return {
             "ciudad": res.get("city", "Santiago"),
@@ -59,34 +58,34 @@ def auditoria_ia(row, total_mes, geo):
     {{
         "tipo": "Categoría",
         "veredicto": "Sarcasmo financiero",
-        "analisis": "Análisis profundo para {ciudad}",
-        "donde_ahorrar": "Lugares reales en Santiago (ej: Mayorista 10, Ferias)",
+        "analisis": "Análisis profundo",
+        "donde_ahorrar": "Lugares reales en Santiago",
         "plan": ["Paso 1", "Paso 2", "Paso 3"],
         "color": "red" o "green" o "orange"
     }}
     """
     
     try:
+        # Intentamos con 1.5 flash, si da 404 el sistema usará el fallback manual
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
-        # Extraer JSON con Regex para evitar errores de texto extra
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
         else:
-            raise ValueError("No se encontró JSON")
+            raise ValueError("No JSON")
     except Exception as e:
-        # FALLBACK: Si la IA falla, usamos lógica manual experta en Santiago
+        # FALLBACK MANUAL (CONSEJOS REALES DE SANTIAGO SI LA IA FALLA)
         return {
-            "tipo": "Gasto Registrado",
-            "veredicto": "Mentoría offline",
-            "analisis": f"Registraste ${monto} en {desc}. Error IA: {str(e)[:30]}",
-            "donde_ahorrar": f"📍 En {ciudad}: Anda a La Vega Central si es comida o usa el Mayorista 10 para abarrotes.",
-            "plan": ["Comparar precios en ferias", "Usar marcas de cadena (Lider/Acuenta)"],
+            "tipo": "Análisis Local",
+            "veredicto": "Mentoría Santiago",
+            "analisis": f"Registraste ${monto} en {desc}. (IA Offline)",
+            "donde_ahorrar": "📍 En Santiago: Frutas y verduras siempre en La Vega Central. Abarrotes en Mayorista 10 o Alvi. Evita el Jumbo si buscas ahorrar.",
+            "plan": ["Comprar en ferias libres", "Usa marcas propias Lider/Acuenta", "Planifica la semana"],
             "color": "blue"
         }
 
-# --- 4. SEGURIDAD: LOGIN CON CAPTCHA ---
+# --- 4. LOGIN CON CAPTCHA ---
 def login():
     st.markdown("<h2 style='text-align: center;'>🔐 Acceso Mentor Pro</h2>", unsafe_allow_html=True)
     if 'n1' not in st.session_state:
@@ -109,11 +108,10 @@ def login():
 def main():
     geo = obtener_geo()
     st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
-    st.sidebar.info(f"📍 Detectado en **{geo['pais']}**")
     
     menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard"])
 
-    # Cargar datos
+    # Cargar datos de Supabase
     try:
         res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
         df = pd.DataFrame(res.data)
@@ -121,13 +119,60 @@ def main():
         df = pd.DataFrame()
 
     if menu == "➕ Registro":
-        st.header(f"📥 Registrar Gasto en {geo['ciudad']}")
+        st.header(f"📥 Nuevo Gasto en {geo['ciudad']}")
         with st.form("form_reg", clear_on_submit=True):
             cat = st.selectbox("Categoría", ["Comida", "Transporte", "Vivienda", "Ocio", "Otros"])
             monto = st.number_input("Monto (CLP)", min_value=0)
-            desc = st.text_input("Descripción (Ej: Compras en el Lider)")
+            desc = st.text_input("Descripción (Ej: Feria del domingo)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    supabase.table("transacciones").insert({
-                        "tipo": "Gasto", "categoria": cat, "monto": monto, 
-                        "descripcion": desc, "ciudad": geo['ciudad'], "moneda": "CLP
+                    # LÍNEA CORREGIDA ABAJO:
+                    supabase.table("transacciones").insert({"tipo": "Gasto", "categoria": cat, "monto": monto, "descripcion": desc, "ciudad": geo['ciudad'], "moneda": "CLP"}).execute()
+                    st.success("✅ Guardado.")
+                    time.sleep(1)
+                    st.rerun()
+
+    elif menu == "🧠 Auditoría IA":
+        st.header(f"🕵️ Auditoría Experta: {geo['ciudad']}")
+        if not df.empty:
+            df_g = df[df['tipo'] == 'Gasto']
+            total = df_g['monto'].sum()
+            
+            st.chat_message("assistant").write(f"Soy tu mentor de **{geo['ciudad']}**. Analicemos:")
+            
+            for _, row in df_g.head(5).iterrows():
+                with st.spinner("Analizando..."):
+                    info = auditoria_ia(row, total, geo)
+                
+                with st.expander(f"🔍 {row['descripcion']} - ${row['monto']:,.0f}"):
+                    c1, c2 = st.columns([3, 1])
+                    c1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
+                    c2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
+                    
+                    st.write(info.get('analisis', 'Sin análisis.'))
+                    st.markdown(f"**📍 Hacks para {geo['ciudad']}:**")
+                    
+                    color = info.get('color', 'blue')
+                    hack = info.get('donde_ahorrar', 'Busca picadas.')
+                    if color == "red": st.error(hack)
+                    elif color == "orange": st.warning(hack)
+                    else: st.success(hack)
+                    
+                    st.markdown("**🚀 Plan de Acción:**")
+                    for p in info.get('plan', ["Comparar precios"]): 
+                        st.write(f"- {p}")
+        else:
+            st.info("Sin gastos registrados.")
+
+    elif menu == "📊 Dashboard":
+        if not df.empty:
+            st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
+
+# --- CONTROL ---
+if 'auth' not in st.session_state:
+    st.session_state.auth = False
+
+if not st.session_state.auth:
+    login()
+else:
+    main()
