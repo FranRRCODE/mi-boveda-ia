@@ -20,13 +20,15 @@ try:
     GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
     
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
+    
+    # Configurar Google AI
     genai.configure(api_key=GEMINI_KEY)
     
 except Exception as e:
     st.error(f"❌ Error de inicio: {e}")
     st.stop()
 
-# --- 2. UBICACIÓN REAL POR IP ---
+# --- 2. UBICACIÓN REAL POR IP (DETECTA SANTIAGO) ---
 @st.cache_data(ttl=3600)
 def obtener_geo_real():
     try:
@@ -35,69 +37,68 @@ def obtener_geo_real():
         url_geo = f"http://ip-api.com/json/{user_ip}" if user_ip else "http://ip-api.com/json/"
         res = requests.get(url_geo).json()
         
-        ciudad = res.get("city", "Santiago")
-        pais_code = res.get("countryCode", "CL")
-        
-        monedas_map = {"CL": "CLP", "MX": "MXN", "CO": "COP", "AR": "ARS", "ES": "EUR", "US": "USD"}
-        
         return {
-            "ciudad": ciudad,
+            "ciudad": res.get("city", "Santiago"),
             "pais": res.get("country", "Chile"),
-            "moneda": monedas_map.get(pais_code, "CLP"),
+            "moneda": "CLP" if res.get("countryCode") == "CL" else "USD",
             "ip": res.get("query", "0.0.0.0")
         }
     except:
         return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP", "ip": "Desconocida"}
 
-# --- 3. NUEVO MOTOR DE IA AVANZADO (SANTIAGO EXPERT) ---
+# --- 3. MOTOR DE IA AVANZADO (SANTIAGO EXPERT) ---
 def auditoria_ia_local(row, total_gastos_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
     moneda = row['moneda']
     impacto = (monto / total_gastos_mes) * 100 if total_gastos_mes > 0 else 0
     
-    # Prompt ultra-detallado para Chile
+    # Prompt de alta precisión para Santiago
     prompt = f"""
-    Eres un Mentor Financiero 'Tiburón' experto en economía doméstica en {geo['ciudad']}, {geo['pais']}.
-    Analiza este gasto: "{desc}" por {moneda} {monto}.
-    Contexto: Es el {impacto:.1f}% del presupuesto mensual del usuario.
+    Actúa como un Gurú Financiero experto en la economía de {geo['ciudad']}, Chile. 
+    Analiza este gasto del usuario: "{desc}" por un valor de {moneda} {monto}.
+    Representa el {impacto:.1f}% del gasto total mensual registrado.
 
-    TAREA:
-    1. Determina si el monto es caro, justo o barato para los precios actuales en {geo['ciudad']}.
-    2. Si es comida/supermercado: Compara precios entre Lider, Jumbo, Mayorista 10, y menciona si conviene ir a La Vega Central o Lo Valledor.
-    3. Si es transporte: Compara Red Metropolitana, Uber, Didi y Cabify en Santiago.
-    4. Si es ocio/café: Sé crítico sobre el 'Gasto Hormiga'.
-    5. Da un plan de ahorro de 3 pasos para este tipo de gasto.
+    INSTRUCCIONES PARA TU RESPUESTA:
+    1. Evalúa si el monto es EXCESIVO para el mercado chileno actual.
+    2. Da consejos REALES: si es comida, menciona La Vega Central, Lo Valledor, Mayorista 10, o marcas propias (Great Value/Lider).
+    3. Si es transporte, menciona trucos de la Tarjeta Bip!, apps como Didi o Uber con descuentos.
+    4. Sé sarcástico pero muy útil.
 
-    Responde ÚNICAMENTE en JSON con esta estructura exacta:
+    RESPONDE EXCLUSIVAMENTE EN FORMATO JSON PLANO:
     {{
         "tipo": "Categoría específica",
-        "veredicto": "Ej: Caro / Buen precio / Gasto Innecesario",
-        "analisis_detallado": "Explicación de 3-4 líneas sobre este gasto en el mercado de {geo['ciudad']}",
-        "donde_ahorrar": "Nombres de tiendas, ferias o apps específicas en Santiago para este gasto",
-        "plan_ahorro": ["Paso 1", "Paso 2", "Paso 3"],
-        "color": "red" o "green" o "orange" o "blue"
+        "veredicto": "Ej: Caro / Justo / Despilfarro",
+        "analisis_detallado": "Análisis profundo de por qué este gasto es así en Santiago.",
+        "donde_ahorrar": "Lista de lugares o apps REALES en Santiago con mejores precios para esto.",
+        "plan_accion": ["Paso 1 para ahorrar", "Paso 2 para ahorrar", "Paso 3 para ahorrar"],
+        "color": "red" (caro/malo), "green" (ahorro/bueno), "orange" (necesario/justo), "blue" (otros)
     }}
     """
 
-    # Intentar con 1.5 Flash primero (es el que mejor maneja JSON detallado)
-    for nombre_modelo in ['gemini-1.5-flash', 'gemini-pro']:
+    # Intentamos con 1.5 Flash primero, si falla usamos Pro
+    for model_name in ['gemini-1.5-flash', 'gemini-pro']:
         try:
-            model = genai.GenerativeModel(nombre_modelo)
+            model = genai.GenerativeModel(model_name)
             response = model.generate_content(prompt)
-            match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            
+            # Limpiar y extraer JSON de la respuesta de la IA
+            texto_ia = response.text
+            match = re.search(r'\{.*\}', texto_ia, re.DOTALL)
             if match:
                 return json.loads(match.group())
-        except:
-            continue
+        except Exception as e:
+            error_msg = str(e)
+            continue # Probar el siguiente modelo
             
+    # Si todo falla, mostrar el error real para arreglarlo
     return {
-        "tipo": "Gasto General",
-        "veredicto": "No analizado",
-        "analisis_detallado": "No pudimos conectar con el cerebro de la IA para un análisis profundo.",
-        "donde_ahorrar": "Busca siempre en Mayoristas o Ferias Libres en Santiago.",
-        "plan_ahorro": ["Registrar más gastos", "Comparar en apps", "Evitar compras impulsivas"],
-        "color": "blue"
+        "tipo": "Error de Conexión",
+        "veredicto": "IA Fuera de línea",
+        "analisis_detallado": f"Error detectado: {error_msg[:100]}",
+        "donde_ahorrar": "Intenta revisar tu API KEY en Google AI Studio. Asegúrate de tener saldo o cuota gratis activa.",
+        "plan_accion": ["Verificar API KEY", "Reintentar en unos minutos"],
+        "color": "red"
     }
 
 # --- 4. SEGURIDAD: LOGIN CON CAPTCHA ---
@@ -105,7 +106,7 @@ def mostrar_login():
     st.markdown("<h1 style='text-align: center;'>🔐 Bóveda IA Mentor Pro</h1>", unsafe_allow_html=True)
     
     if 'n1' not in st.session_state:
-        st.session_state.n1, st.session_state.n2 = random.randint(1, 12), random.randint(1, 12)
+        st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
     with st.container(border=True):
         u = st.text_input("Usuario")
@@ -120,29 +121,32 @@ def mostrar_login():
                 st.rerun()
             else:
                 st.error("Credenciales o Captcha incorrectos.")
-                st.session_state.n1, st.session_state.n2 = random.randint(1, 12), random.randint(1, 12)
+                st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
 # --- 5. APP PRINCIPAL ---
 def main():
     geo = obtener_geo_real()
     
     st.sidebar.title(f"🏠 Mentor: {geo['ciudad']}")
-    st.sidebar.info(f"📍 Detectado en {geo['pais']}")
+    st.sidebar.markdown(f"📍 Detectado en **{geo['pais']}**")
     
-    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR"], index=0 if geo['moneda']=="CLP" else 1)
+    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR"], index=0)
     menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría Pro IA", "📊 Dashboard"])
 
-    # Datos Supabase
-    res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
-    df = pd.DataFrame(res.data)
+    # Cargar datos de Supabase
+    try:
+        res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
+        df = pd.DataFrame(res.data)
+    except:
+        df = pd.DataFrame()
 
     if menu == "➕ Registro":
-        st.header(f"📥 Nuevo Gasto en {geo['ciudad']}")
+        st.header(f"📥 Nuevo Registro en {geo['ciudad']}")
         with st.form("reg", clear_on_submit=True):
             tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
             cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Otros"])
             monto = st.number_input(f"Monto ({moneda_selec})", min_value=0.0)
-            desc = st.text_input("Descripción específica (Ej: Supermercado Santa Isabel)")
+            desc = st.text_input("Descripción (Ej: Compras en el Lider)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
                     supabase.table("transacciones").insert({
@@ -150,49 +154,50 @@ def main():
                         "descripcion": desc, "ciudad": geo['ciudad'], 
                         "pais": geo['pais'], "moneda": moneda_selec
                     }).execute()
-                    st.success("✅ Guardado en la nube.")
+                    st.success("✅ Guardado.")
                     st.rerun()
 
     elif menu == "🧠 Auditoría Pro IA":
-        st.header(f"🕵️ Auditoría Especializada: {geo['ciudad']}")
+        st.header(f"🕵️ Análisis Experto: {geo['ciudad']}")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
             
-            st.chat_message("assistant").write(f"Hola, he analizado tus gastos considerando el mercado de **{geo['ciudad']}**. Aquí está tu diagnóstico:")
+            st.chat_message("assistant").write(f"Soy tu mentor experto en **Santiago**. He analizado tus gastos:")
             
-            for _, row in df_g.head(8).iterrows():
-                with st.spinner(f"Analizando '{row['descripcion']}' en Santiago..."):
+            for _, row in df_g.head(5).iterrows():
+                with st.spinner(f"Analizando '{row['descripcion']}'..."):
                     info = auditoria_ia_local(row, total, geo)
                 
                 with st.expander(f"🔍 {row['descripcion']} - {row['moneda']} {row['monto']:,.0f}"):
-                    # Encabezado con Veredicto
-                    col1, col2 = st.columns([2, 1])
-                    col1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
-                    col2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
+                    # Layout del Análisis
+                    c1, c2 = st.columns([3, 1])
+                    c1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
+                    c2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
                     
-                    # Análisis Detallado
-                    st.write(info.get('analisis_detallado', 'Sin detalles.'))
+                    st.write(info.get('analisis_detallado', '...'))
                     
-                    # Dónde ahorrar (Nombres reales)
+                    # Hack Local (Muestra comercios reales de Santiago)
                     st.markdown(f"#### 📍 Mejores ofertas en {geo['ciudad']}:")
                     color = info.get('color', 'blue')
-                    hack = info.get('donde_ahorrar', 'Busca en locales cercanos.')
+                    hack = info.get('donde_ahorrar', 'No hay datos.')
                     
                     if color == "red": st.error(hack)
                     elif color == "orange": st.warning(hack)
                     elif color == "green": st.success(hack)
                     else: st.info(hack)
                     
-                    # Plan de Ahorro
+                    # Plan de acción paso a paso
                     st.markdown("**🚀 Plan de Acción:**")
-                    for paso in info.get('plan_ahorro', []):
+                    for paso in info.get('plan_accion', []):
                         st.write(f"- {paso}")
+                    
+                    st.caption(f"Impacto: {(row['monto']/total*100):.1f}% del presupuesto.")
         else:
-            st.info("Registra un gasto primero para auditar.")
+            st.info("Registra gastos para empezar.")
 
     elif menu == "📊 Dashboard":
-        st.header("📊 Dashboard de Gastos")
+        st.header("📊 Inteligencia de Gastos")
         if not df.empty:
             st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
             st.dataframe(df, use_container_width=True)
