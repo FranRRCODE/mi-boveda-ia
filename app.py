@@ -18,7 +18,7 @@ try:
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
     genai.configure(api_key=GEMINI_KEY)
 except Exception as e:
-    st.error("⚠️ Error en Secrets. Revisa SUPABASE y GEMINI_API_KEY.")
+    st.error("⚠️ Configura los Secrets: SUPABASE_URL, SUPABASE_KEY y GEMINI_API_KEY.")
     st.stop()
 
 # --- 2. UBICACIÓN POR IP REAL ---
@@ -36,150 +36,145 @@ def obtener_geo():
     except:
         return {"ciudad": "Santiago", "moneda": "CLP", "pais": "Chile"}
 
-# --- 3. MOTOR DE IA CON AUTO-RECUPERACIÓN (SOLUCIÓN AL 404) ---
-def auditoria_ia_v3(row, total_mes, geo):
+# --- 3. BUSCADOR AUTOMÁTICO DE MODELOS (SOLUCIÓN AL 404) ---
+def obtener_modelo_valido():
+    """Busca en tu cuenta de Google qué modelo tienes permitido usar."""
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                # Retornamos el nombre del modelo disponible (ej: models/gemini-1.5-flash)
+                return m.name
+    except:
+        return None
+    return None
+
+def auditoria_ia_v4(row, total_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
     ciudad = geo['ciudad']
     
     prompt = f"""
-    Eres un Mentor Financiero experto en la economía de {ciudad}, Chile. 
-    Analiza este gasto: "{desc}" por un valor de ${monto} CLP.
+    Eres un Mentor Financiero 'Tiburón' en {ciudad}, Chile. 
+    Analiza este gasto: "{desc}" por ${monto} CLP.
     
     INSTRUCCIONES:
-    1. Evalúa el monto según los precios en {ciudad}.
-    2. Da consejos reales: Menciona La Vega Central, Lo Valledor, Mayorista 10, Alvi o ferias libres.
-    3. Si es transporte, menciona trucos de la Bip! o apps como Didi.
-    4. Sé sarcástico pero muy útil.
+    - Sé muy específico sobre Santiago. 
+    - Menciona lugares REALES: La Vega Central, Lo Valledor, Mayorista 10, Alvi, ferias libres.
+    - Compara precios: ¿Es caro para {ciudad}?
+    - Da un plan de ahorro real.
 
-    Responde exclusivamente en JSON:
+    Responde ESTRICTAMENTE en JSON:
     {{
-        "tipo": "Categoría real",
-        "veredicto": "Sarcasmo chileno sobre el gasto",
-        "analisis": "Análisis profundo de por qué es caro o barato en Santiago",
-        "donde_ahorrar": "Lista de lugares REALES en {ciudad} con mejores precios para esto.",
-        "plan": ["Paso 1 para ahorrar", "Paso 2 para ahorrar", "Paso 3 para ahorrar"],
+        "tipo": "Categoría",
+        "veredicto": "Sarcasmo financiero",
+        "analisis": "Análisis profundo para {ciudad}",
+        "donde_ahorrar": "Lugares reales en Santiago (ej: Mayorista 10, Ferias)",
+        "plan": ["Paso 1", "Paso 2", "Paso 3"],
         "color": "red" o "green" o "orange"
     }}
     """
 
-    # --- LISTA DE MODELOS A PROBAR (PARA EVITAR EL 404) ---
-    modelos_a_probar = ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-pro']
+    modelo_nombre = obtener_modelo_valido()
     
-    last_error = ""
-    for nombre_modelo in modelos_a_probar:
-        try:
-            model = genai.GenerativeModel(nombre_modelo)
-            response = model.generate_content(prompt)
-            
-            # Limpieza y extracción de JSON
-            match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            if match:
-                return json.loads(match.group())
-        except Exception as e:
-            last_error = str(e)
-            continue # Si falla (404), prueba el siguiente modelo
-            
-    # SI TODOS FALLAN, USAMOS ESTE MENTOR MANUAL CHILENO
-    return {
-        "tipo": "Gasto Registrado",
-        "veredicto": "IA Temporalmente fuera de línea",
-        "analisis": f"Registraste un gasto de ${monto} en {ciudad}. (Error Técnico: {last_error[:50]})",
-        "donde_ahorrar": f"En {ciudad}, la regla de oro es: NUNCA compres en el Jumbo si quieres ahorrar. Anda a La Vega Central para frutas/verduras y al Mayorista 10 para abarrotes.",
-        "plan": ["Revisa tu presupuesto semanal", "Compara precios en la App 'Tuu'", "Usa marcas propias"],
-        "color": "orange"
-    }
+    if not modelo_nombre:
+        return {
+            "tipo": "Error de API",
+            "veredicto": "API Key sin permisos",
+            "analisis": "Tu API Key no tiene modelos habilitados en Google AI Studio.",
+            "donde_ahorrar": "📍 Hack: Anda a La Vega Central, es lo más barato de Santiago.",
+            "plan": ["Revisa tu API Key", "Habilita Gemini 1.5 en AI Studio"],
+            "color": "red"
+        }
 
-# --- 4. SEGURIDAD: LOGIN CON CAPTCHA ---
+    try:
+        model = genai.GenerativeModel(modelo_nombre)
+        response = model.generate_content(prompt)
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        return json.loads(match.group())
+    except Exception as e:
+        return {
+            "tipo": "Gasto Registrado",
+            "veredicto": "IA con Hipo",
+            "analisis": f"Error detectado: {str(e)[:50]}",
+            "donde_ahorrar": "📍 En Santiago: Prefiere siempre ferias libres de barrio antes que el super.",
+            "plan": ["Comparar precios", "Usar efectivo en ferias"],
+            "color": "orange"
+        }
+
+# --- 4. LOGIN CON CAPTCHA ---
 def login():
-    st.markdown("<h2 style='text-align: center;'>🔐 Acceso Bóveda IA Mentor</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>🔐 Acceso Mentor Pro</h2>", unsafe_allow_html=True)
     if 'n1' not in st.session_state:
-        st.session_state.n1, st.session_state.n2 = random.randint(1, 9), random.randint(1, 9)
+        st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
     
     with st.container(border=True):
-        u = st.text_input("Usuario Master")
+        u = st.text_input("Usuario")
         p = st.text_input("Contraseña", type="password")
-        captcha_res = st.number_input(f"Captcha: ¿Cuánto es {st.session_state.n1} + {st.session_state.n2}?", step=1)
-        
-        if st.button("Ingresar al Sistema", use_container_width=True):
-            if u == "admin" and p == "1234567899" and captcha_res == (st.session_state.n1 + st.session_state.n2):
+        cap = st.number_input(f"Captcha: {st.session_state.n1} + {st.session_state.n2}?", step=1)
+        if st.button("Entrar", use_container_width=True):
+            if u == "admin" and p == "1234567899" and cap == (st.session_state.n1 + st.session_state.n2):
                 st.session_state.auth = True
                 st.rerun()
             else:
-                st.error("Acceso Denegado.")
-                st.session_state.n1, st.session_state.n2 = random.randint(1, 9), random.randint(1, 9)
+                st.error("Datos incorrectos.")
+                st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
-# --- 5. APLICACIÓN PRINCIPAL ---
+# --- 5. APP PRINCIPAL ---
 def main():
     geo = obtener_geo()
-    st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
-    st.sidebar.info(f"📍 Detectado en **{geo['pais']}**")
+    st.sidebar.title(f"🏠 Mentor: {geo['ciudad']}")
+    st.sidebar.caption(f"📍 Detectado en **{geo['pais']}**")
     
-    menu = st.sidebar.radio("Menú", ["➕ Registro Rápido", "🧠 Auditoría IA Santiago", "📊 Dashboard"])
+    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard"])
 
-    # Datos Supabase
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
-    if menu == "➕ Registro Rápido":
-        st.header(f"📥 Registro de Gastos ({geo['ciudad']})")
-        with st.form("r_form", clear_on_submit=True):
+    if menu == "➕ Registro":
+        st.header(f"📥 Registrar en {geo['ciudad']}")
+        with st.form("f"):
             cat = st.selectbox("Categoría", ["Comida", "Transporte", "Vivienda", "Ocio", "Otros"])
-            monto = st.number_input(f"Monto ({geo['moneda']})", min_value=0)
-            desc = st.text_input("¿En qué gastaste? (Ej: Pan y cecinas en el negocio)")
-            if st.form_submit_button("Guardar Gasto"):
+            monto = st.number_input("Monto (CLP)", min_value=0)
+            desc = st.text_input("Descripción (Ej: Feria del sábado)")
+            if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    supabase.table("transacciones").insert({
-                        "tipo": "Gasto", "categoria": cat, "monto": monto, 
-                        "descripcion": desc, "ciudad": geo['ciudad'], "moneda": geo['moneda']
-                    }).execute()
-                    st.toast("Gasto guardado. Gemini analizando...")
+                    supabase.table("transacciones").insert({"tipo": "Gasto", "categoria": cat, "monto": monto, "descripcion": desc, "ciudad": geo['ciudad'], "moneda": "CLP"}).execute()
+                    st.success("Guardado.")
                     st.rerun()
 
-    elif menu == "🧠 Auditoría IA Santiago":
-        st.header(f"🕵️ Auditoría Experta: {geo['ciudad']}")
+    elif menu == "🧠 Auditoría IA":
+        st.header(f"🕵️ Auditoría Local: {geo['ciudad']}")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
-            
-            st.chat_message("assistant").write(f"Hola, soy tu mentor experto en **Santiago**. He analizado tus gastos:")
-            
             for _, row in df_g.head(8).iterrows():
-                with st.spinner(f"Conectando con el cerebro de Google..."):
-                    info = auditoria_ia_v3(row, total, geo)
+                with st.spinner("IA analizando mercado chileno..."):
+                    info = auditoria_ia_v4(row, total, geo)
                 
                 with st.expander(f"🔍 {row['descripcion']} - ${row['monto']:,.0f}"):
-                    # Layout
-                    col1, col2 = st.columns([3, 1])
-                    col1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
-                    col2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
+                    c1, c2 = st.columns([3, 1])
+                    c1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
+                    c2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
                     
-                    st.write(info.get('analisis', 'Sin análisis disponible.'))
+                    st.write(info.get('analisis', 'Sin análisis.'))
+                    st.markdown(f"**📍 Hacks para ahorrar en {geo['ciudad']}:**")
                     
-                    # Hack Local (Muestra comercios reales de Santiago)
-                    st.markdown(f"#### 📍 Mejores ofertas en {geo['ciudad']}:")
                     color = info.get('color', 'blue')
-                    hack = info.get('donde_ahorrar', 'Busca en locales cercanos.')
-                    
+                    hack = info.get('donde_ahorrar', 'Busca picadas locales.')
                     if color == "red": st.error(hack)
                     elif color == "orange": st.warning(hack)
-                    elif color == "green": st.success(hack)
-                    else: st.info(hack)
+                    else: st.success(hack)
                     
-                    # Plan de acción paso a paso
                     st.markdown("**🚀 Plan de Acción:**")
-                    for paso in info.get('plan', []):
-                        st.write(f"- {paso}")
+                    for p in info.get('plan', []): st.write(f"- {p}")
         else:
-            st.info("No hay gastos registrados aún.")
+            st.info("Sin gastos.")
 
     elif menu == "📊 Dashboard":
-        st.header("📊 Distribución de Gastos")
         if not df.empty:
             st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
-            st.dataframe(df, use_container_width=True)
 
-# --- CONTROL DE FLUJO ---
+# --- CONTROL ---
 if 'auth' not in st.session_state: st.session_state.auth = False
 if not st.session_state.auth: login()
 else: main()
