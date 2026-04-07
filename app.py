@@ -4,61 +4,69 @@ import pandas as pd
 import plotly.express as px
 import requests
 import yfinance as yf
+import hashlib
 import random
 from datetime import datetime
 
-# --- CONFIGURACIÓN DE NUBE ---
+# --- 1. CONFIGURACIÓN DE NUBE (SEGURA) ---
 try:
     URL_NUBE = st.secrets["SUPABASE_URL"]
     KEY_NUBE = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
-except:
+except Exception:
     st.error("⚠️ Configura tus Secrets en Streamlit Cloud (SUPABASE_URL y SUPABASE_KEY)")
     st.stop()
 
-# --- CONFIGURACIÓN DE USUARIO ---
-USUARIO_MASTER = "admin"
-PASSWORD_MASTER = "1234567899"
+# --- 2. CONFIGURACIÓN DE USUARIO ---
+USUARIO_MASTER = "admin" 
+# Esta es tu contraseña real (Cámbiala si quieres)
+PASSWORD_MASTER = "1234567899" 
 
-# --- FUNCIONES DE UBICACIÓN Y MONEDA ---
+# --- 3. FUNCIONES DE UBICACIÓN (MEJORADAS) ---
 @st.cache_data(ttl=3600)
-def obtener_geo():
+def obtener_geo_automatica():
     try:
-        res = requests.get('https://ipapi.co/json/').json()
-        return {
-            "ciudad": res.get("city", "Desconocida"),
-            "pais": res.get("country_name", "Global"),
-            "code": res.get("country", "US"),
-            "moneda_sugerida": res.get("currency", "USD")
-        }
+        # Usamos ip-api.com que es más permisiva con servidores de la nube
+        res = requests.get('http://ip-api.com/json/').json()
+        if res.get("status") == "success":
+            return {
+                "ciudad": res.get("city", "Santiago"),
+                "pais": res.get("country", "Chile"),
+                "code": res.get("countryCode", "CL"),
+                "moneda": "CLP" if res.get("countryCode") == "CL" else "USD"
+            }
     except:
-        return {"ciudad": "Desconocida", "pais": "Global", "code": "US", "moneda_sugerida": "USD"}
+        pass
+    # Valores por defecto si falla la detección
+    return {"ciudad": "Santiago", "pais": "Chile", "code": "CL", "moneda": "CLP"}
 
-# --- LÓGICA DE IA ---
-def analizar_ia_personalizado(desc, monto, moneda, geo):
+# --- 4. LÓGICA DE IA PERSONALIZADA ---
+def analizar_ia_personalizado(desc, monto, moneda, ciudad):
     desc = desc.lower()
-    # Ajuste de contexto según moneda (ejemplo rápido: 1000 CLP no es igual a 1000 USD)
-    es_moneda_devaluada = moneda in ["CLP", "COP", "ARS", "PYG"]
-    monto_critico = 50000 if es_moneda_devaluada else 100
+    es_moneda_baja = moneda in ["CLP", "COP", "ARS", "PYG"]
+    monto_aviso = 40000 if es_moneda_baja else 100
 
     hacks = {
-        "starbucks": "☕ **Hack IA:** El café de marca es una fuga de capital. Usa termo propio para descuentos.",
-        "netflix": "📺 **Optimización:** Revisa tus suscripciones. Si no las usas diario, cámbiate a planes básicos.",
-        "uber": f"🚗 **Movilidad:** En {geo['ciudad']}, compara Uber vs Didi. Puedes ahorrar un 15% por viaje.",
-        "doggis": "🌭 **Tip Local:** Usa los cupones de la App. Los miércoles de 2x1 son la mejor opción.",
-        "amazon": "📦 **Compra Online:** Usa comparadores. Si el monto supera {moneda} {monto_critico}, espera 48h antes de comprar.",
-        "supermercado": "🛒 **Súper:** Compra marcas blancas; ahorras un 30% en productos básicos.",
-        "servicios sexuales": "⚠️ **Gestión:** Gasto discrecional alto. Pon un tope mensual fijo en {moneda} para no afectar tu renta."
+        "starbucks": "☕ **Hack IA:** El café premium es una fuga silenciosa. Usa el termo de la marca para obtener descuentos en cada recarga.",
+        "netflix": "📺 **Optimización:** ¿Ves Netflix a diario? Si no, cambia al plan con anuncios o comparte gastos legalmente.",
+        "uber": f"🚗 **Movilidad en {ciudad}:** Compara con Didi o Cabify. En horas punta, la diferencia suele ser de hasta un 20%.",
+        "doggis": "🌭 **Tip Local:** Revisa la App de Doggis los miércoles; los cupones de '2x1' son el mejor hack de ahorro en comida rápida.",
+        "amazon": f"📦 **Compra Online:** Si el monto supera {moneda} {monto_aviso}, aplica la regla de las 48h antes de confirmar el pago.",
+        "supermercado": "🛒 **Súper:** Compra marcas propias (Líder, Great Value, etc); ahorras un 30% en la canasta básica.",
+        "servicios sexuales": "⚠️ **Gestión Financiera:** Este es un gasto discrecional de alto impacto. Define un presupuesto mensual fijo para no comprometer tus ahorros.",
+        "gasolina": "⛽ **Eficiencia:** Carga combustible temprano en la mañana; la densidad es mayor y obtienes un poco más por tu dinero."
     }
     
-    for clave in hacks:
+    for clave, consejo in hacks.items():
         if clave in desc:
-            return hacks[clave]
-    return f"🔍 **Análisis General:** Gasto detectado en {geo['ciudad']}. ¿Es realmente necesario este gasto de {moneda} {monto}?"
+            return consejo
+            
+    return f"🔍 **Análisis General:** Gasto en {ciudad}. Pregúntate: ¿Este gasto de {moneda} {monto:,.0f} me acerca a mis metas de ahorro?"
 
-# --- INTERFAZ LOGIN ---
+# --- 5. INTERFAZ DE LOGIN ---
 def mostrar_login():
-    st.markdown("<h1 style='text-align: center;'>🔐 IA Finance Secure</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🔐 IA Finance Secure Access</h1>", unsafe_allow_html=True)
+    
     if 'c_n1' not in st.session_state:
         st.session_state.c_n1 = random.randint(1, 10)
         st.session_state.c_n2 = random.randint(1, 10)
@@ -66,87 +74,122 @@ def mostrar_login():
     with st.form("login_form"):
         u = st.text_input("Usuario")
         p = st.text_input("Contraseña", type="password")
-        captcha = st.number_input(f"🤖 Captcha: {st.session_state.c_n1} + {st.session_state.c_n2}?", step=1)
+        captcha = st.number_input(f"🤖 Captcha: ¿Cuánto es {st.session_state.c_n1} + {st.session_state.c_n2}?", step=1)
+        
         if st.form_submit_button("Entrar"):
-            if captcha == (st.session_state.c_n1 + st.session_state.c_n2) and u == USUARIO_MASTER and p == PASSWORD_MASTER:
-                st.session_state.auth = True
-                st.rerun()
+            if captcha == (st.session_state.c_n1 + st.session_state.c_n2):
+                if u == USUARIO_MASTER and p == PASSWORD_MASTER:
+                    st.session_state.auth = True
+                    st.rerun()
+                else:
+                    st.error("Usuario o contraseña incorrectos.")
             else:
-                st.error("Datos incorrectos o Captcha fallido.")
+                st.error("Captcha incorrecto. Intenta de nuevo.")
+                st.session_state.c_n1 = random.randint(1, 10)
+                st.session_state.c_n2 = random.randint(1, 10)
 
-# --- APP PRINCIPAL ---
+# --- 6. APP PRINCIPAL ---
 def main():
-    geo = obtener_geo()
+    # Obtener ubicación inicial
+    geo_auto = obtener_geo_automatica()
     
-    # --- CONFIGURACIÓN DE MONEDA EN SIDEBAR ---
-    st.sidebar.title(f"📍 {geo['ciudad']}")
+    # --- BARRA LATERAL (CONFIGURACIÓN) ---
+    st.sidebar.title("📍 Configuración Local")
     
-    lista_monedas = ["USD", "CLP", "MXN", "COP", "EUR", "ARS", "PEN", "BRL"]
-    # Intentamos pre-seleccionar la moneda de su país
-    idx_default = lista_monedas.index(geo['moneda_sugerida']) if geo['moneda_sugerida'] in lista_monedas else 0
+    # Selector de Ubicación Manual (Por si la IP falla)
+    ubicacion_user = st.sidebar.text_input("Tu Ciudad/País:", value=f"{geo_auto['ciudad']}, {geo_auto['pais']}")
+    ciudad_final = ubicacion_user.split(",")[0].strip()
     
-    moneda_selec = st.sidebar.selectbox("Selecciona tu moneda:", lista_monedas, index=idx_default)
+    # Selector de Moneda Global
+    lista_monedas = ["CLP", "USD", "MXN", "COP", "EUR", "ARS", "BRL", "PEN"]
+    idx_def = lista_monedas.index(geo_auto['moneda']) if geo_auto['moneda'] in lista_monedas else 1
+    moneda_selec = st.sidebar.selectbox("Moneda de trabajo:", lista_monedas, index=idx_def)
     
-    # Mostrar tipo de cambio si no es USD
+    # Mostrar Tasa de Cambio Real
     if moneda_selec != "USD":
         try:
             t_cambio = yf.Ticker(f"USD{moneda_selec}=X").history(period="1d")['Close'].iloc[-1]
             st.sidebar.metric(f"1 USD a {moneda_selec}", f"${t_cambio:.2f}")
-        except: pass
+        except:
+            pass
 
-    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 IA Mentor", "📊 Datos"])
+    st.sidebar.markdown("---")
+    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Mentor IA", "📊 Dashboard"])
     
     if st.sidebar.button("Cerrar Sesión"):
         st.session_state.auth = False
         st.rerun()
 
-    # --- SECCIONES ---
+    # --- SECCIÓN A: REGISTRO ---
     if menu == "➕ Registro":
         st.header(f"📥 Registro en {moneda_selec}")
         with st.form("reg_form", clear_on_submit=True):
-            tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
-            cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
-            monto = st.number_input(f"Monto Total", min_value=0.0)
-            desc = st.text_input("Descripción (Ej: Uber, Starbucks, Arriendo)")
-            if st.form_submit_button("Guardar"):
+            col1, col2 = st.columns(2)
+            tipo = col1.selectbox("Tipo", ["Gasto", "Ingreso"])
+            cat = col2.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
+            monto = st.number_input(f"Monto Total ({moneda_selec})", min_value=0.0)
+            desc = st.text_input("Descripción (Ej: Starbucks, Uber, Doggis)")
+            
+            if st.form_submit_button("Guardar en Nube"):
                 if desc and monto > 0:
                     data = {
                         "tipo": tipo, "categoria": cat, "monto": float(monto), 
-                        "descripcion": desc, "ciudad": geo['ciudad'], 
-                        "pais": geo['pais'], "moneda": moneda_selec
+                        "descripcion": desc, "ciudad": ciudad_final, 
+                        "pais": ubicacion_user.split(",")[-1].strip(), "moneda": moneda_selec
                     }
                     supabase.table("transacciones").insert(data).execute()
-                    st.success(f"✅ Guardado en {moneda_selec}")
+                    st.success(f"✅ Guardado exitosamente en {moneda_selec}")
+                else:
+                    st.warning("Completa la descripción y el monto.")
 
-    elif menu == "🧠 IA Mentor":
-        st.header("🤖 Análisis Personalizado")
+    # --- SECCIÓN B: MENTOR IA ---
+    elif menu == "🧠 Mentor IA":
+        st.header(f"🤖 Análisis IA para {ciudad_final}")
         res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
         df = pd.DataFrame(res.data)
+        
         if not df.empty:
-            for _, row in df[df['tipo'] == 'Gasto'].head(10).iterrows():
-                # Pasamos la moneda guardada en el registro a la IA
-                moneda_registro = row.get('moneda', 'USD')
-                with st.expander(f"📌 {row['descripcion']} ({moneda_registro} {row['monto']:,.0f})"):
-                    st.write(analizar_ia_personalizado(row['descripcion'], row['monto'], moneda_registro, geo))
-        else: st.info("Sin movimientos.")
+            gastos_df = df[df['tipo'] == 'Gasto'].head(10)
+            if not gastos_df.empty:
+                for _, row in gastos_df.iterrows():
+                    m_reg = row.get('moneda', moneda_selec)
+                    with st.expander(f"📌 {row['descripcion']} - {m_reg} {row['monto']:,.0f}"):
+                        st.info(analizar_ia_personalizado(row['descripcion'], row['monto'], m_reg, ciudad_final))
+            else:
+                st.info("No hay gastos registrados para analizar.")
+        else:
+            st.info("La nube está vacía. Registra movimientos primero.")
 
-    elif menu == "📊 Datos":
-        st.header("Dashboard Financiero")
+    # --- SECCIÓN C: DASHBOARD ---
+    elif menu == "📊 Dashboard":
+        st.header(f"Resumen Financiero ({moneda_selec})")
         res = supabase.table("transacciones").select("*").execute()
         df = pd.DataFrame(res.data)
+        
         if not df.empty:
-            # Solo mostramos gráficos de la moneda actualmente seleccionada para no mezclar peras con manzanas
-            df_moneda = df[df['moneda'] == moneda_selec]
-            if not df_moneda.empty:
-                st.subheader(f"Gastos en {moneda_selec}")
-                fig = px.pie(df_moneda[df_moneda['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.4)
+            # Filtramos solo por la moneda seleccionada para no mezclar valores
+            df_m = df[df['moneda'] == moneda_selec]
+            
+            if not df_m.empty:
+                c1, c2, c3 = st.columns(3)
+                ing = df_m[df_m['tipo'] == 'Ingreso']['monto'].sum()
+                gas = df_m[df_m['tipo'] == 'Gasto']['monto'].sum()
+                c1.metric("Ingresos", f"{moneda_selec} {ing:,.0f}")
+                c2.metric("Gastos", f"{moneda_selec} {gas:,.0f}")
+                c3.metric("Balance", f"{moneda_selec} {ing-gas:,.0f}")
+                
+                st.subheader("Distribución de Gastos")
+                fig = px.pie(df_m[df_m['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.4)
                 st.plotly_chart(fig, use_container_width=True)
-                st.dataframe(df_moneda, use_container_width=True)
+                
+                st.subheader("Historial de Transacciones")
+                st.dataframe(df_m.sort_values(by='id', ascending=False), use_container_width=True)
             else:
-                st.warning(f"No hay registros guardados en {moneda_selec}.")
-        else: st.info("No hay datos.")
+                st.warning(f"No hay registros guardados en la moneda {moneda_selec}.")
+        else:
+            st.info("No hay datos registrados.")
 
-# --- CONTROLADOR ---
+# --- CONTROLADOR DE SESIÓN ---
 if 'auth' not in st.session_state:
     st.session_state.auth = False
 
