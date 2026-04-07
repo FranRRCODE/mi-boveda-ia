@@ -17,150 +17,164 @@ try:
     
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
     
+    # Configuración de Gemini
     genai.configure(api_key=GEMINI_KEY)
-    
-    # CAMBIO DEFINITIVO: Usamos 'gemini-pro' que es el modelo más compatible (v1.0)
-    # Este modelo no debería dar error 404 nunca si la API Key es válida.
-    model = genai.GenerativeModel('gemini-pro') 
+    # Usamos 1.5 Flash que es el más moderno y potente actualmente
+    model = genai.GenerativeModel('gemini-1.5-flash') 
     
 except Exception as e:
-    st.error(f"⚠️ Error de configuración: {e}")
+    st.error(f"❌ Error crítico de configuración: {e}")
     st.stop()
 
-# --- 2. SEGURIDAD ---
-USUARIO_MASTER = "admin" 
-PASSWORD_MASTER = "1234567899" 
-
-# --- 3. UBICACIÓN AUTOMÁTICA ---
+# --- 2. UBICACIÓN REAL POR IP ---
 @st.cache_data(ttl=3600)
-def obtener_geo():
+def obtener_geo_avanzada():
+    """Detecta la ubicación real del usuario, no la del servidor."""
     try:
-        res = requests.get("http://ip-api.com/json/").json()
-        return {"ciudad": res.get("city", "Santiago"), "pais": res.get("country", "Chile"), "moneda": "CLP" if res.get("countryCode") == "CL" else "USD"}
-    except: return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
+        # Intentamos obtener la IP del cliente a través de los headers de Streamlit
+        user_ip = st.context.headers.get("X-Forwarded-For")
+        if user_ip:
+            user_ip = user_ip.split(",")[0]
+            res = requests.get(f"http://ip-api.com/json/{user_ip}").json()
+        else:
+            # Fallback si no detecta header
+            res = requests.get("http://ip-api.com/json/").json()
+        
+        pais_code = res.get("countryCode", "CL")
+        
+        # Mapeo de monedas por país
+        monedas = {
+            "CL": "CLP", "MX": "MXN", "CO": "COP", "AR": "ARS", 
+            "ES": "EUR", "US": "USD", "PE": "PEN"
+        }
+        
+        return {
+            "ciudad": res.get("city", "Santiago"),
+            "pais": res.get("country", "Chile"),
+            "moneda": monedas.get(pais_code, "USD"),
+            "ip": res.get("query", "0.0.0.0")
+        }
+    except:
+        return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP", "ip": "Local"}
 
-# --- 4. MOTOR DE IA (REFORZADO PARA GEMINI PRO) ---
-def auditoria_ia_gemini(row, total_gastos_mes, ciudad):
+# --- 3. MOTOR DE IA (DETERMINA OFERTAS LOCALES) ---
+def auditoria_ia_pro(row, total_gastos_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
     moneda = row['moneda']
     impacto = (monto / total_gastos_mes) * 100 if total_gastos_mes > 0 else 0
     
-    # Prompt optimizado para modelos Pro
+    # El Prompt ahora obliga a buscar ofertas locales según la ciudad
     prompt = f"""
-    Eres un Mentor Financiero en {ciudad}. 
-    Gasto: "{desc}" | Monto: {moneda} {monto} | % del mes: {impacto:.1f}%
+    Eres un Mentor Financiero experto en la ciudad de {geo['ciudad']}, {geo['pais']}.
+    El usuario gastó {moneda} {monto} en: "{desc}". 
+    Este gasto representa el {impacto:.1f}% de su mes.
 
-    Responde SOLO con este formato JSON:
+    TAREA:
+    1. Clasifica el gasto.
+    2. Da un análisis financiero crudo.
+    3. RECOMIENDA OFERTAS O TIENDAS REALES en {geo['ciudad']} donde este gasto sea más barato 
+       (Ej: si es super en Chile, menciona Lider o ferias libres; si es en México, Bodega Aurrera, etc).
+
+    Responde ESTRICTAMENTE en este formato JSON:
     {{
-        "tipo": "categoría",
-        "analisis": "breve frase de impacto",
-        "hack": "consejo financiero real",
+        "tipo": "Categoría",
+        "analisis": "Frase de impacto",
+        "hack_local": "Oferta o tienda específica en {geo['ciudad']} para ahorrar",
         "color": "red" o "green" o "orange" o "blue"
     }}
     """
 
     try:
         response = model.generate_content(prompt)
-        # Limpieza de texto para asegurar que solo leamos el JSON
-        texto_sucio = response.text
-        match = re.search(r'\{.*\}', texto_sucio, re.DOTALL)
+        # Extraer JSON limpiamente
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
-        else:
-            raise ValueError("Respuesta no es JSON")
+        else: raise ValueError("Respuesta no válida")
     except Exception as e:
-        # Si Gemini Pro falla, usamos este análisis simple para no romper la app
+        # DETECTOR DE ERROR REAL (Para debug)
         return {
-            "tipo": "Gasto Registrado",
-            "analisis": f"Registraste {monto} en {desc}.",
-            "hack": "Si este error persiste, revisa tu API KEY en Google AI Studio.",
-            "color": "blue"
+            "tipo": "Error de Diagnóstico",
+            "analisis": f"No pude conectar con Gemini. Error: {str(e)[:50]}",
+            "hack_local": "Revisa si tu API KEY en Google AI Studio tiene permisos para 'Gemini 1.5 Flash'.",
+            "color": "red"
         }
 
-# --- 5. INTERFAZ LOGIN ---
-def mostrar_login():
-    st.markdown("<h1 style='text-align: center;'>🔐 Bóveda IA Mentor Pro</h1>", unsafe_allow_html=True)
-    if 'c_n1' not in st.session_state:
-        st.session_state.c_n1, st.session_state.c_n2 = random.randint(1, 10), random.randint(1, 10)
-    with st.form("login"):
-        u = st.text_input("Usuario")
-        p = st.text_input("Contraseña", type="password")
-        cap = st.number_input(f"Captcha: {st.session_state.c_n1} + {st.session_state.c_n2}?", step=1)
-        if st.form_submit_button("Entrar"):
-            if cap == (st.session_state.c_n1 + st.session_state.c_n2) and u == USUARIO_MASTER and p == PASSWORD_MASTER:
-                st.session_state.auth = True
-                st.rerun()
-            else: st.error("Error de acceso.")
-
-# --- 6. APP PRINCIPAL ---
+# --- 4. APP PRINCIPAL ---
 def main():
-    geo = obtener_geo()
-    st.sidebar.title(f"📍 Mentor en {geo['ciudad']}")
-    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR", "COP"])
-    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard", "✏️ Gestión"])
+    geo = obtener_geo_avanzada()
+    
+    st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
+    st.sidebar.caption(f"📍 IP: {geo['ip']} | 🌎 {geo['pais']}")
+    
+    # Selección de moneda (Default según IP)
+    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR", "COP", "PEN"], index=["CLP", "USD", "MXN", "EUR", "COP", "PEN"].index(geo['moneda']) if geo['moneda'] in ["CLP", "USD", "MXN", "EUR", "COP", "PEN"] else 1)
+    
+    menu = st.sidebar.radio("Navegación", ["➕ Registro Rápido", "🧠 Auditoría Local IA", "📊 Dashboard"])
 
+    # Cargar Datos
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
-    if menu == "➕ Registro":
-        st.header(f"📥 Registro ({moneda_selec})")
+    if menu == "➕ Registro Rápido":
+        st.header(f"📥 Registrar Gasto en {geo['ciudad']}")
         with st.form("reg", clear_on_submit=True):
             tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
             cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
-            monto = st.number_input("Monto", min_value=0.0)
-            desc = st.text_input("Descripción (Ej: Compra Supermercado)")
+            monto = st.number_input(f"Monto ({moneda_selec})", min_value=0.0)
+            desc = st.text_input("Descripción (Ej: Compra de carne en el super)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    supabase.table("transacciones").insert({"tipo": tipo, "categoria": cat, "monto": float(monto), "descripcion": desc, "ciudad": geo['ciudad'], "pais": geo['pais'], "moneda": moneda_selec}).execute()
-                    st.success("✅ Guardado.")
+                    supabase.table("transacciones").insert({
+                        "tipo": tipo, "categoria": cat, "monto": float(monto), 
+                        "descripcion": desc, "ciudad": geo['ciudad'], 
+                        "pais": geo['pais'], "moneda": moneda_selec
+                    }).execute()
+                    st.success("Registrado. ¡Gemini está analizando tu zona!")
                     st.rerun()
 
-    elif menu == "🧠 Auditoría IA":
-        st.header("🕵️ Auditoría con Gemini Pro")
+    elif menu == "🧠 Auditoría Local IA":
+        st.header(f"🕵️ Auditoría Especializada: {geo['ciudad']}")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
+            
+            st.chat_message("assistant").write(f"He detectado que estás en **{geo['ciudad']}**. Aquí tienes mi análisis de tus gastos locales:")
+            
             for _, row in df_g.head(8).iterrows():
-                with st.spinner("Analizando..."):
-                    info = auditoria_ia_gemini(row, total, geo['ciudad'])
-                with st.expander(f"🔍 {row['descripcion']} ({row['moneda']} {row['monto']:,.0f})"):
+                with st.spinner(f"Buscando ofertas en {geo['ciudad']}..."):
+                    info = auditoria_ia_pro(row, total, geo)
+                
+                with st.expander(f"🔍 {row['descripcion']} - {row['moneda']} {row['monto']:,.0f}"):
                     st.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
-                    st.write(info.get('analisis', 'Análisis breve.'))
+                    st.write(info.get('analisis', '...'))
+                    
+                    # Hack Local basado en la ciudad detectada por IP
+                    st.markdown(f"**📍 Hack para {geo['ciudad']}:**")
                     c = info.get('color', 'blue')
-                    h = info.get('hack', 'Sin hacks.')
+                    h = info.get('hack_local', 'No hay ofertas detectadas.')
+                    
                     if c == "red": st.error(h)
                     elif c == "orange": st.warning(h)
                     elif c == "green": st.success(h)
                     else: st.info(h)
-        else:
-            st.info("Sin datos.")
 
     elif menu == "📊 Dashboard":
-        st.header("📊 Resumen")
+        st.header("📊 Resumen General")
         if not df.empty:
-            df_m = df[df['moneda'] == moneda_selec]
-            if not df_m.empty:
-                st.plotly_chart(px.pie(df_m[df_m['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.5))
-                st.dataframe(df_m)
+            st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.4))
+            st.dataframe(df, use_container_width=True)
 
-    elif menu == "✏️ Gestión":
-        st.header("⚙️ Editar/Borrar")
-        if not df.empty:
-            opc = {f"{r['descripcion']} ({r['id']})": r['id'] for _, r in df.iterrows()}
-            id_sel = opc[st.selectbox("Selecciona:", list(opc.keys()))]
-            reg = df[df['id'] == id_sel].iloc[0]
-            with st.form("edit"):
-                n_m = st.number_input("Monto", value=float(reg['monto']))
-                n_d = st.text_input("Descripción", value=reg['descripcion'])
-                c1, c2 = st.columns(2)
-                if c1.form_submit_button("Actualizar"):
-                    supabase.table("transacciones").update({"monto": n_m, "descripcion": n_d}).eq("id", id_sel).execute()
-                    st.rerun()
-                if c2.form_submit_button("Eliminar"):
-                    supabase.table("transacciones").delete().eq("id", id_sel).execute()
-                    st.rerun()
-
+# --- SEGURIDAD ---
 if 'auth' not in st.session_state: st.session_state.auth = False
-if not st.session_state.auth: mostrar_login()
-else: main()
+if not st.session_state.auth:
+    st.title("🔐 Bóveda IA")
+    u = st.text_input("Usuario")
+    p = st.text_input("Password", type="password")
+    if st.button("Entrar"):
+        if u == "admin" and p == "1234567899":
+            st.session_state.auth = True
+            st.rerun()
+else:
+    main()
