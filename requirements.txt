@@ -1,5 +1,5 @@
 streamlit>=1.37.0
-google-generativeai>=0.7.2
+openai
 supabase
 requests
 pandas
