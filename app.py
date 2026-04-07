@@ -45,53 +45,51 @@ def auditoria_ia_groq(row, total_mes, geo):
     ciudad = geo['ciudad']
     
     prompt = f"""
-    Eres un Mentor Financiero experto en la economía de {ciudad}, Chile. 
+    Eres un Mentor Financiero experto en Santiago de Chile. 
     Analiza este gasto: "{desc}" por ${monto} CLP. 
-    Impacto en el presupuesto: {(monto/total_mes*100):.1f}%.
 
-    TAREA:
-    - Evalúa si el precio es bueno para {ciudad}.
-    - Menciona comercios reales de Santiago: La Vega Central, Lo Valledor, Mayorista 10, Alvi, ferias libres.
-    - Da un plan de ahorro real de 3 pasos.
-
-    RESPONDE ÚNICAMENTE EN FORMATO JSON PLANO:
+    Responde ÚNICAMENTE en JSON:
     {{
         "tipo": "Categoría",
         "veredicto": "Sarcasmo chileno",
         "analisis": "Análisis profundo para Santiago",
         "donde_ahorrar": "Lista de lugares REALES en Santiago",
         "plan": ["Paso 1", "Paso 2", "Paso 3"],
-        "color": "red" (caro), "green" (ahorro), "orange" (normal)
+        "color": "red" o "green" o "orange"
     }}
     """
     
     try:
-        # Usamos Llama 3.1 70B (Potente y gratis en Groq)
+        # Probamos con el modelo más nuevo de Groq
         chat_completion = ai_groq.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.1-70b-versatile",
-            temperature=0.5,
+            model="llama-3.3-70b-versatile", # <--- Modelo actualizado
+            temperature=0.2, # Menos creatividad para que no rompa el JSON
         )
         
-        # Limpieza de JSON
         texto_ia = chat_completion.choices[0].message.content
+        
+        # Limpieza extrema del JSON
         match = re.search(r'\{.*\}', texto_ia, re.DOTALL)
         if match:
             return json.loads(match.group())
         else:
+            st.error(f"La IA respondió algo que no es JSON: {texto_ia[:100]}")
             raise ValueError()
 
     except Exception as e:
-        # Fallback manual si Groq falla (poco probable)
+        # ESTO ES LO IMPORTANTE: Ahora verás el error real en la pantalla
+        st.error(f"❌ Error de Groq: {str(e)}") 
+        
+        # Fallback manual experto en Santiago
         return {
-            "tipo": "Gasto Santiago",
-            "veredicto": "Análisis Manual",
-            "analisis": f"Registraste ${monto} en {desc}.",
-            "donde_ahorrar": "📍 Santiago: Anda a La Vega Central si es comida o Mayorista 10 para abarrotes.",
-            "plan": ["Comparar precios en ferias", "Usar marcas Acuenta", "Evitar el Jumbo"],
+            "tipo": "Análisis Santiago",
+            "veredicto": "Mentoría Local",
+            "analisis": f"Registraste ${monto} en {desc}. (IA en mantenimiento)",
+            "donde_ahorrar": "📍 Santiago: Frutas en La Vega, abarrotes en Mayorista 10 o Alvi.",
+            "plan": ["Ir a la feria de tu comuna", "Usar marcas Acuenta/Lider", "Comprar al por mayor"],
             "color": "blue"
         }
-
 # --- 4. SEGURIDAD: LOGIN CON CAPTCHA ---
 def login():
     st.markdown("<h2 style='text-align: center;'>🔐 Acceso Mentor Pro</h2>", unsafe_allow_html=True)
