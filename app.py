@@ -10,8 +10,9 @@ from datetime import datetime
 
 # --- CONFIGURACIÓN DE SUPABASE ---
 # Uso de secretos de Streamlit (Más seguro)
-URL_NUBE = st.secrets["sb_publishable_Dszp5pC1TZupO6Q0GLGBRQ_31f9F2mI"]
-KEY_NUBE = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im91eWFmZnF1aHZma3p3bHFsY29pIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTUyNTU0MSwiZXhwIjoyMDkxMTAxNTQxfQ.YnkeUa-5f1QeETFmaPnr5GvB_Ni-vj9vdq2Ylx8VVys"]
+# --- CONFIGURACIÓN DE NUBE ---
+URL_NUBE = st.secrets["SUPABASE_URL"]
+KEY_NUBE = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(URL_NUBE, KEY_NUBE)
 
 # --- CONFIGURACIÓN DE USUARIO ---
