@@ -9,24 +9,36 @@ import google.generativeai as genai
 import json
 import re
 
-# --- 1. CONFIGURACIÓN INICIAL (DEBE SER LO PRIMERO) ---
-st.set_page_config(page_title="Bóveda IA Mentor", page_icon="🔐")
+# --- 1. CONFIGURACIÓN INICIAL ---
+st.set_page_config(page_title="Bóveda IA Mentor", page_icon="🔐", layout="wide")
 
-def cargar_config():
+def inicializar_ia():
     try:
-        url = st.secrets["SUPABASE_URL"]
-        key = st.secrets["SUPABASE_KEY"]
-        g_key = st.secrets["GEMINI_API_KEY"]
-        sb = create_client(url, key)
-        genai.configure(api_key=g_key)
-        return sb
+        URL_NUBE = st.secrets["SUPABASE_URL"]
+        KEY_NUBE = st.secrets["SUPABASE_KEY"]
+        GEMINI_KEY = st.secrets["GEMINI_API_KEY"]
+        
+        sb = create_client(URL_NUBE, KEY_NUBE)
+        genai.configure(api_key=GEMINI_KEY)
+        
+        # BUSCADOR AUTOMÁTICO DE MODELO
+        # Intentamos encontrar el modelo 1.5 flash, si no el pro, si no el primero disponible.
+        modelos_disponibles = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        modelo_final = "gemini-1.5-flash" # Default
+        for m in ["models/gemini-1.5-flash", "models/gemini-1.5-flash-latest", "models/gemini-pro"]:
+            if m in modelos_disponibles:
+                modelo_final = m
+                break
+        
+        return sb, genai.GenerativeModel(modelo_final)
     except Exception as e:
-        st.error(f"Error en Secrets: {e}")
+        st.error(f"Error de conexión: {e}")
         st.stop()
 
-supabase = cargar_config()
+supabase, model_ai = inicializar_ia()
 
-# --- 2. UBICACIÓN POR IP (PARA SANTIAGO) ---
+# --- 2. UBICACIÓN POR IP REAL ---
 @st.cache_data(ttl=3600)
 def obtener_geo():
     try:
@@ -40,52 +52,49 @@ def obtener_geo():
         return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
 
 # --- 3. MOTOR DE IA (SANTIAGO EXPERT) ---
-def auditoria_ia(row, total_mes, geo):
+def auditoria_ia_pro(row, total_mes, geo):
     desc = row['descripcion']
     monto = row['monto']
     ciudad = geo['ciudad']
     
     prompt = f"""
-    Eres un Mentor Financiero experto en la economía de {ciudad}, Chile. 
+    Eres un Mentor Financiero experto en Santiago de Chile. 
     Analiza este gasto: "{desc}" por ${monto} CLP.
     
     INSTRUCCIONES:
-    - Evalúa si el precio es bueno para {ciudad}.
-    - Menciona tiendas reales de Santiago: La Vega, Mayorista 10, Alvi, ferias libres.
-    - Da un plan de ahorro real.
+    - Evalúa el precio para Santiago.
+    - Menciona lugares REALES: La Vega Central, Lo Valledor, Mayorista 10, Alvi, ferias de barrio.
+    - Da un plan de ahorro real de 3 pasos.
 
     Responde ESTRICTAMENTE en JSON:
     {{
         "tipo": "Categoría",
-        "veredicto": "Sarcasmo financiero",
+        "veredicto": "Sarcasmo chileno",
         "analisis": "Análisis profundo",
-        "donde_ahorrar": "Lugares reales en Santiago",
+        "donde_ahorrar": "Lista de lugares REALES en Santiago",
         "plan": ["Paso 1", "Paso 2", "Paso 3"],
         "color": "red" o "green" o "orange"
     }}
     """
     
     try:
-        # Intentamos con 1.5 flash, si da 404 el sistema usará el fallback manual
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
+        response = model_ai.generate_content(prompt)
         match = re.search(r'\{.*\}', response.text, re.DOTALL)
         if match:
             return json.loads(match.group())
-        else:
-            raise ValueError("No JSON")
-    except Exception as e:
-        # FALLBACK MANUAL (CONSEJOS REALES DE SANTIAGO SI LA IA FALLA)
+        else: raise ValueError()
+    except:
+        # MENTOR MANUAL DE EMERGENCIA
         return {
             "tipo": "Análisis Local",
-            "veredicto": "Mentoría Santiago",
-            "analisis": f"Registraste ${monto} en {desc}. (IA Offline)",
-            "donde_ahorrar": "📍 En Santiago: Frutas y verduras siempre en La Vega Central. Abarrotes en Mayorista 10 o Alvi. Evita el Jumbo si buscas ahorrar.",
-            "plan": ["Comprar en ferias libres", "Usa marcas propias Lider/Acuenta", "Planifica la semana"],
+            "veredicto": "Economía Santiago",
+            "analisis": f"Registraste ${monto} en {desc}.",
+            "donde_ahorrar": "📍 En Santiago: Frutas y verduras en La Vega Central. Abarrotes en Mayorista 10 o Alvi. Usa marcas propias como Líder o Acuenta.",
+            "plan": ["Ir a la feria el domingo", "Comparar precios en apps", "Planificar compras"],
             "color": "blue"
         }
 
-# --- 4. LOGIN CON CAPTCHA ---
+# --- 4. SEGURIDAD: LOGIN ---
 def login():
     st.markdown("<h2 style='text-align: center;'>🔐 Acceso Mentor Pro</h2>", unsafe_allow_html=True)
     if 'n1' not in st.session_state:
@@ -101,35 +110,32 @@ def login():
                 st.session_state.auth = True
                 st.rerun()
             else:
-                st.error("Credenciales incorrectas.")
+                st.error("Error de acceso.")
                 st.session_state.n1, st.session_state.n2 = random.randint(1, 10), random.randint(1, 10)
 
-# --- 5. APLICACIÓN PRINCIPAL ---
+# --- 5. APP PRINCIPAL ---
 def main():
     geo = obtener_geo()
     st.sidebar.title(f"🏠 Mentor en {geo['ciudad']}")
     
     menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard"])
 
-    # Cargar datos de Supabase
-    try:
-        res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
-        df = pd.DataFrame(res.data)
-    except:
-        df = pd.DataFrame()
+    res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
+    df = pd.DataFrame(res.data)
 
     if menu == "➕ Registro":
-        st.header(f"📥 Nuevo Gasto en {geo['ciudad']}")
-        with st.form("form_reg", clear_on_submit=True):
+        st.header(f"📥 Nuevo Registro ({geo['ciudad']})")
+        with st.form("reg", clear_on_submit=True):
             cat = st.selectbox("Categoría", ["Comida", "Transporte", "Vivienda", "Ocio", "Otros"])
             monto = st.number_input("Monto (CLP)", min_value=0)
-            desc = st.text_input("Descripción (Ej: Feria del domingo)")
+            desc = st.text_input("¿Qué compraste? (Ej: Carne en el Lider)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    # LÍNEA CORREGIDA ABAJO:
-                    supabase.table("transacciones").insert({"tipo": "Gasto", "categoria": cat, "monto": monto, "descripcion": desc, "ciudad": geo['ciudad'], "moneda": "CLP"}).execute()
+                    supabase.table("transacciones").insert({
+                        "tipo": "Gasto", "categoria": cat, "monto": monto, 
+                        "descripcion": desc, "ciudad": geo['ciudad'], "moneda": "CLP"
+                    }).execute()
                     st.success("✅ Guardado.")
-                    time.sleep(1)
                     st.rerun()
 
     elif menu == "🧠 Auditoría IA":
@@ -138,19 +144,19 @@ def main():
             df_g = df[df['tipo'] == 'Gasto']
             total = df_g['monto'].sum()
             
-            st.chat_message("assistant").write(f"Soy tu mentor de **{geo['ciudad']}**. Analicemos:")
+            st.chat_message("assistant").write(f"Soy tu mentor de **{geo['ciudad']}**. Analicemos tus gastos locales:")
             
-            for _, row in df_g.head(5).iterrows():
-                with st.spinner("Analizando..."):
-                    info = auditoria_ia(row, total, geo)
+            for _, row in df_g.head(8).iterrows():
+                with st.spinner("IA analizando mercado chileno..."):
+                    info = auditoria_ia_pro(row, total, geo)
                 
                 with st.expander(f"🔍 {row['descripcion']} - ${row['monto']:,.0f}"):
                     c1, c2 = st.columns([3, 1])
                     c1.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
                     c2.markdown(f"**Veredicto:** `{info.get('veredicto', 'N/A')}`")
                     
-                    st.write(info.get('analisis', 'Sin análisis.'))
-                    st.markdown(f"**📍 Hacks para {geo['ciudad']}:**")
+                    st.write(info.get('analisis', '...'))
+                    st.markdown(f"**📍 Hack en {geo['ciudad']}:**")
                     
                     color = info.get('color', 'blue')
                     hack = info.get('donde_ahorrar', 'Busca picadas.')
@@ -159,8 +165,7 @@ def main():
                     else: st.success(hack)
                     
                     st.markdown("**🚀 Plan de Acción:**")
-                    for p in info.get('plan', ["Comparar precios"]): 
-                        st.write(f"- {p}")
+                    for p in info.get('plan', ["Comparar precios"]): st.write(f"- {p}")
         else:
             st.info("Sin gastos registrados.")
 
@@ -169,10 +174,6 @@ def main():
             st.plotly_chart(px.pie(df[df['tipo']=='Gasto'], values='monto', names='categoria', hole=0.5))
 
 # --- CONTROL ---
-if 'auth' not in st.session_state:
-    st.session_state.auth = False
-
-if not st.session_state.auth:
-    login()
-else:
-    main()
+if 'auth' not in st.session_state: st.session_state.auth = False
+if not st.session_state.auth: login()
+else: main()
