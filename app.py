@@ -30,18 +30,18 @@ def obtener_geo():
         return {"ciudad": res.get("city", "Santiago"), "pais": res.get("country", "Chile"), "moneda": "CLP" if res.get("countryCode") == "CL" else "USD"}
     except: return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
 
-# --- 4. MOTOR DE IA INTERACTIVA (REACCIONES) ---
+# --- 4. REACCIONES DE IA (POP-UPS) ---
 def reaccion_ia_inmediata(desc, monto, moneda):
     desc = desc.lower()
     if "starbucks" in desc or "cafe" in desc:
-        return "☕ ¡Cuidado! Ese café hoy pudo ser una inversión a futuro. ¿Llevaste tu termo?"
+        return "☕ ¡Cuidado! Ese café hoy pudo ser una inversión. ¿Llevaste tu termo?"
     if "uber" in desc or "didi" in desc:
-        return "🚗 ¿Había mucha tarifa dinámica? La próxima vez intenta caminar si es cerca."
+        return "🚗 ¿Tarifa dinámica? La próxima vez intenta caminar si es cerca."
     if "netflix" in desc or "spotify" in desc:
-        return "📺 Las suscripciones son 'vampiros' de dinero. ¡Revísalas!"
+        return "📺 Los suscripciones son 'vampiros' de dinero. ¡Revísalas!"
     if monto > 50000 and moneda == "CLP" or monto > 100:
-        return "🚨 ¡Gasto pesado detectado! Espero que haya estado en el presupuesto."
-    return "✅ Registro anotado. ¡Sigue así, el control es poder!"
+        return "🚨 ¡Gasto pesado detectado! Espero que esté en el presupuesto."
+    return "✅ Registro anotado. ¡El control es poder!"
 
 # --- 5. INTERFAZ LOGIN ---
 def mostrar_login():
@@ -64,93 +64,90 @@ def main():
     st.sidebar.title(f"📍 {geo['ciudad']}")
     moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR", "COP", "ARS"])
     
-    menu = st.sidebar.radio("Navegación", ["➕ Registro Rápido", "🧠 Auditoría IA", "📊 Dashboard", "✏️ Editar"])
+    menu = st.sidebar.radio("Navegación", ["➕ Registro Rápido", "🧠 Auditoría IA", "📊 Dashboard", "✏️ Editar / Borrar"])
 
     # Cargar datos de la nube
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
-    # --- A: REGISTRO CON POP-UPS (TOASTS) ---
+    # --- SECCIÓN A: REGISTRO CON POP-UPS ---
     if menu == "➕ Registro Rápido":
-        st.header(f"📥 Nuevo Gasto en {moneda_selec}")
-        
+        st.header(f"📥 Nuevo Movimiento ({moneda_selec})")
         with st.form("reg_form", clear_on_submit=True):
             tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
             cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
             monto = st.number_input("Monto", min_value=0.0)
             desc = st.text_input("Descripción (Ej: Starbucks, Uber, Arriendo)")
-            
             if st.form_submit_button("Guardar en Nube"):
                 if desc and monto > 0:
                     data = {"tipo": tipo, "categoria": cat, "monto": float(monto), "descripcion": desc, "ciudad": geo['ciudad'], "pais": geo['pais'], "moneda": moneda_selec}
                     supabase.table("transacciones").insert(data).execute()
-                    
-                    # --- INTERACTIVIDAD: POP-UP (TOAST) ---
-                    reaccion = reaccion_ia_inmediata(desc, monto, moneda_selec)
-                    st.toast(reaccion, icon='🤖')
+                    st.toast(reaccion_ia_inmediata(desc, monto, moneda_selec), icon='🤖')
                     time.sleep(1)
-                    st.success("✅ Guardado con éxito.")
-                else:
-                    st.error("Faltan datos.")
+                    st.success("✅ Guardado.")
+                else: st.error("Faltan datos.")
 
-    # --- B: AUDITORÍA INTERACTIVA (CHATS Y POPOVERS) ---
+    # --- SECCIÓN B: AUDITORÍA IA ---
     elif menu == "🧠 Auditoría IA":
-        st.header("🕵️ Auditoría de Gastos Inteligente")
-        
+        st.header("🕵️ Auditoría Inteligente")
         if not df.empty:
-            st.chat_message("assistant").write(f"Hola! He analizado tus últimos movimientos en **{geo['ciudad']}**. Aquí tienes mis hallazgos:")
-            
-            # Usar Popovers para cada hallazgo
+            st.chat_message("assistant").write(f"¡Hola! He analizado tus movimientos en **{geo['ciudad']}**. Haz clic en los botones para ver detalles:")
             gastos_f = df[df['tipo'] == 'Gasto'].head(5)
             for _, row in gastos_f.iterrows():
-                with st.popover(f"🔍 Análisis: {row['descripcion']} ({row['moneda']} {row['monto']:,.0f})"):
+                with st.popover(f"🔍 {row['descripcion']} ({row['moneda']} {row['monto']:,.0f})"):
                     st.write(f"**Categoría:** {row['categoria']}")
-                    st.write(f"**Fecha:** {row['fecha']}")
-                    st.markdown("---")
-                    # Lógica personalizada
                     if "starbucks" in row['descripcion'].lower():
-                        st.info("💡 **Consejo:** El gasto en marcas de lujo de café puede representar el 15% de tu ahorro mensual. ¡Intenta usar la App para puntos!")
+                        st.info("💡 **Tip:** Lleva tu propio termo para ahorrar dinero y ayudar al planeta.")
                     elif "uber" in row['descripcion'].lower():
-                        st.warning("💡 **Alternativa:** En horas valle, caminar o usar transporte público te ahorraría el 70% de este monto.")
-                    else:
-                        st.write("El gasto parece normal, pero recuerda siempre pedir boleta para control de impuestos.")
+                        st.warning("💡 **Tip:** Compara con Didi o usa transporte público para ahorrar un 70%.")
+                    else: st.write("Gasto analizado correctamente.")
+        else: st.info("Sin datos registrados.")
 
-            # Resumen interactivo
-            total_g = df[df['tipo'] == 'Gasto']['monto'].sum()
-            with st.chat_message("user"):
-                st.write(f"¿Cuál es mi situación general?")
-            
-            with st.chat_message("assistant"):
-                if total_g > 500000: # Ejemplo CLP
-                    st.error("Estás gastando por encima del promedio. Necesitamos un plan de recorte urgente.")
-                else:
-                    st.success("Vas por buen camino. Tu flujo de caja está saludable.")
-        else:
-            st.info("Registra datos para que la IA pueda hablarte.")
-
-    # --- C: DASHBOARD ---
+    # --- SECCIÓN C: DASHBOARD ---
     elif menu == "📊 Dashboard":
-        st.header("📊 Tu Salud Financiera")
+        st.header(f"Dashboard ({moneda_selec})")
         if not df.empty:
             df_m = df[df['moneda'] == moneda_selec]
             if not df_m.empty:
-                st.plotly_chart(px.pie(df_m[df_m['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.5, title="Gastos por Categoría"))
+                st.plotly_chart(px.pie(df_m[df_m['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.5))
                 st.dataframe(df_m, use_container_width=True)
-            else: st.warning(f"No hay registros en {moneda_selec}")
+            else: st.warning(f"Sin registros en {moneda_selec}")
 
-    # --- D: EDITAR ---
-    elif menu == "✏️ Editar":
-        st.header("🛠️ Corregir Datos")
+    # --- SECCIÓN D: EDITAR / BORRAR (CORREGIDA) ---
+    elif menu == "✏️ Editar / Borrar":
+        st.header("🛠️ Modificar o Eliminar Movimientos")
         if not df.empty:
-            opciones = {f"{row['descripcion']} (${row['monto']})": row['id'] for _, row in df.iterrows()}
-            id_e = opciones[st.selectbox("Selecciona:", list(opciones.keys()))]
-            reg = df[df['id'] == id_e].iloc[0]
-            with st.form("edit"):
-                m_n = st.number_input("Nuevo Monto", value=float(reg['monto']))
-                d_n = st.text_input("Nueva Descrip.", value=reg['descripcion'])
-                if st.form_submit_button("Actualizar"):
-                    supabase.table("transacciones").update({"monto": m_n, "descripcion": d_n}).eq("id", id_e).execute()
+            # Seleccionador de registros
+            opciones = {f"{row['descripcion']} (${row['monto']}) | ID: {row['id']}": row['id'] for _, row in df.iterrows()}
+            seleccion = st.selectbox("Selecciona el registro a corregir:", list(opciones.keys()))
+            id_edit = opciones[seleccion]
+            
+            # Obtener datos del registro seleccionado
+            reg_actual = df[df['id'] == id_edit].iloc[0]
+            
+            st.markdown("---")
+            with st.form("form_edicion"):
+                st.write(f"Editando Registro ID: {id_edit}")
+                nuevo_monto = st.number_input("Nuevo Monto", value=float(reg_actual['monto']))
+                nueva_desc = st.text_input("Nueva Descripción", value=reg_actual['descripcion'])
+                
+                col_save, col_del = st.columns(2)
+                
+                # Botón de Guardar
+                if col_save.form_submit_button("💾 Guardar Cambios"):
+                    supabase.table("transacciones").update({"monto": nuevo_monto, "descripcion": nueva_desc}).eq("id", id_edit).execute()
+                    st.success("✅ Actualizado con éxito.")
+                    time.sleep(1)
                     st.rerun()
+                
+                # Botón de Borrar
+                if col_del.form_submit_button("🗑️ BORRAR PERMANENTE"):
+                    supabase.table("transacciones").delete().eq("id", id_edit).execute()
+                    st.warning("🗑️ Registro eliminado de la nube.")
+                    time.sleep(1)
+                    st.rerun()
+        else:
+            st.info("No hay datos para editar.")
 
 # --- CONTROL ---
 if 'auth' not in st.session_state: st.session_state.auth = False
