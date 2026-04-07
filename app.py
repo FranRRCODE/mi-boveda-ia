@@ -9,7 +9,7 @@ import google.generativeai as genai
 import json
 import re
 
-# --- 1. CONFIGURACIÓN DE NUBE ---
+# --- 1. CONFIGURACIÓN DE NUBE Y IA ---
 try:
     # Cargar llaves desde Secrets
     URL_NUBE = st.secrets["SUPABASE_URL"]
@@ -18,23 +18,24 @@ try:
     
     # Clientes
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
+    
+    # Configurar Gemini
     genai.configure(api_key=GEMINI_KEY)
-    # Usamos flash que es más rápido y estable para este tipo de tareas
-    model = genai.GenerativeModel('gemini-1.5-flash') 
+    # CAMBIO CLAVE: Usamos 'gemini-1.5-flash-latest' para evitar el error 404
+    model = genai.GenerativeModel('gemini-1.5-flash-latest') 
 except Exception as e:
     st.error(f"⚠️ Error de configuración: {e}")
-    st.info("Asegúrate de tener SUPABASE_URL, SUPABASE_KEY y GEMINI_API_KEY en tus Secrets.")
+    st.info("Revisa tus Secrets en Streamlit Cloud.")
     st.stop()
 
 # --- 2. SEGURIDAD ---
 USUARIO_MASTER = "admin" 
 PASSWORD_MASTER = "1234567899" 
 
-# --- 3. UBICACIÓN ---
+# --- 3. UBICACIÓN AUTOMÁTICA ---
 @st.cache_data(ttl=3600)
 def obtener_geo():
     try:
-        # Intento obtener IP real tras el proxy de Streamlit
         res = requests.get("http://ip-api.com/json/").json()
         return {
             "ciudad": res.get("city", "Santiago"), 
@@ -44,47 +45,44 @@ def obtener_geo():
     except: 
         return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
 
-# --- 4. MOTOR DE IA (CORREGIDO) ---
+# --- 4. MOTOR DE IA GEMINI (REFORZADO) ---
 def auditoria_ia_gemini(row, total_gastos_mes, ciudad):
     desc = row['descripcion']
     monto = row['monto']
     moneda = row['moneda']
     impacto = (monto / total_gastos_mes) * 100 if total_gastos_mes > 0 else 0
     
-    # Prompt ultra-específico para evitar que la IA devuelva basura
     prompt = f"""
-    Eres un Mentor Financiero inteligente. Analiza este gasto:
-    - Item: {desc}
-    - Costo: {moneda} {monto}
-    - Ciudad: {ciudad}
-    - Impacto: {impacto:.1f}% del presupuesto mensual.
+    Eres un Mentor Financiero experto en {ciudad}. 
+    Analiza este gasto: "{desc}" de {moneda} {monto}.
+    Representa el {impacto:.1f}% del total del mes.
 
-    Responde ESTRICTAMENTE en formato JSON plano:
-    {{
-        "tipo": "Categoría corta",
-        "analisis": "Análisis fluido de 1 oración",
-        "hack": "Consejo financiero real para Chile",
-        "color": "red" o "green" o "orange" o "blue"
-    }}
+    Responde ÚNICAMENTE un objeto JSON con estas llaves:
+    "tipo": categoria creativa,
+    "analisis": frase corta de impacto,
+    "hack": consejo financiero específico para Chile,
+    "color": "red" (gasto innecesario), "green" (necesidad), "orange" (transporte/fijo), "blue" (otros).
     """
 
     try:
         response = model.generate_content(prompt)
-        # Limpieza de la respuesta: eliminamos bloques de código ```json ... ```
-        texto = response.text
-        limpio = re.search(r'\{.*\}', texto, re.DOTALL)
-        if limpio:
-            return json.loads(limpio.group())
+        # Extraer solo el contenido JSON usando Regex (por si la IA mete texto extra)
+        match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
         else:
-            raise ValueError("No se encontró JSON en la respuesta")
-            
+            return {
+                "tipo": "Gasto Registrado",
+                "analisis": "Análisis en proceso.",
+                "hack": "Intenta ser más específico en la descripción.",
+                "color": "blue"
+            }
     except Exception as e:
-        # Si algo falla, registramos el error para debuggear
         return {
-            "tipo": "Error de Conexión",
-            "analisis": f"La IA tuvo un hipo. Error: {str(e)[:50]}",
-            "hack": "Verifica que tu API Key de Gemini esté activa en Google AI Studio.",
-            "color": "blue"
+            "tipo": "Error de IA",
+            "analisis": f"Hipo técnico: {str(e)[:40]}",
+            "hack": "Revisa que tu API Key tenga cuota disponible en Google AI Studio.",
+            "color": "red"
         }
 
 # --- 5. INTERFAZ LOGIN ---
@@ -100,101 +98,86 @@ def mostrar_login():
             if cap == (st.session_state.c_n1 + st.session_state.c_n2) and u == USUARIO_MASTER and p == PASSWORD_MASTER:
                 st.session_state.auth = True
                 st.rerun()
-            else: st.error("Datos incorrectos.")
+            else: st.error("Credenciales incorrectas.")
 
 # --- 6. APP PRINCIPAL ---
 def main():
     geo = obtener_geo()
     st.sidebar.title(f"📍 Mentor en {geo['ciudad']}")
-    moneda_selec = st.sidebar.selectbox("Moneda de Trabajo:", ["CLP", "USD", "MXN", "EUR", "COP"])
+    moneda_selec = st.sidebar.selectbox("Moneda:", ["CLP", "USD", "MXN", "EUR", "COP"])
     
-    menu = st.sidebar.radio("Menú", ["➕ Registro", "🧠 Auditoría Gemini", "📊 Dashboard", "✏️ Gestionar"])
+    menu = st.sidebar.radio("Navegación", ["➕ Registro", "🧠 Auditoría IA", "📊 Dashboard", "✏️ Editar/Borrar"])
 
-    # Cargar Datos
+    # Cargar datos desde Supabase
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
     if menu == "➕ Registro":
         st.header(f"📥 Nuevo Registro ({moneda_selec})")
         with st.form("reg", clear_on_submit=True):
-            t = st.selectbox("Tipo", ["Gasto", "Ingreso"])
-            c = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
-            m = st.number_input("Monto", min_value=0.0)
-            d = st.text_input("¿En qué gastaste? (Ej: Supermercado Lider)")
+            tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
+            cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
+            monto = st.number_input("Monto", min_value=0.0)
+            desc = st.text_input("Descripción (Ej: Feria del sábado)")
             if st.form_submit_button("Guardar"):
-                if d and m > 0:
+                if desc and monto > 0:
                     supabase.table("transacciones").insert({
-                        "tipo": t, "categoria": c, "monto": float(m), 
-                        "descripcion": d, "ciudad": geo['ciudad'], 
+                        "tipo": tipo, "categoria": cat, "monto": float(monto), 
+                        "descripcion": desc, "ciudad": geo['ciudad'], 
                         "pais": geo['pais'], "moneda": moneda_selec
                     }).execute()
-                    st.success("¡Guardado exitosamente!")
+                    st.success("✅ Guardado correctamente.")
                     st.rerun()
 
-    elif menu == "🧠 Auditoría Gemini":
-        st.header("🕵️ Auditoría con Gemini 1.5")
+    elif menu == "🧠 Auditoría IA":
+        st.header("🕵️ Auditoría Gemini 1.5")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
-            total_gastos = df_g['monto'].sum()
+            total = df_g['monto'].sum()
             
-            st.info(f"Analizando tus últimos movimientos en {geo['ciudad']}...")
-            
-            # Solo analizamos los últimos 10 para no agotar la API
             for _, row in df_g.head(10).iterrows():
-                # Llamada a la IA
-                info = auditoria_ia_gemini(row, total_gastos, geo['ciudad'])
+                with st.spinner(f"Analizando {row['descripcion']}..."):
+                    info = auditoria_ia_gemini(row, total, geo['ciudad'])
                 
-                with st.expander(f"🔍 {row['descripcion']} - {row['moneda']} {row['monto']:,.0f}"):
-                    st.subheader(f"🏷️ {info['tipo']}")
-                    st.write(info['analisis'])
+                with st.expander(f"🔍 {row['descripcion']} ({row['moneda']} {row['monto']:,.0f})"):
+                    st.subheader(f"🏷️ {info.get('tipo', 'Gasto')}")
+                    st.write(info.get('analisis', 'Análisis no disponible.'))
                     
-                    # Mostrar Hack según color
-                    c = info['color']
-                    if c == "red": st.error(f"💡 Hack: {info['hack']}")
-                    elif c == "orange": st.warning(f"💡 Hack: {info['hack']}")
-                    elif c == "green": st.success(f"💡 Hack: {info['hack']}")
-                    else: st.info(f"💡 Hack: {info['hack']}")
-                    
-                    st.caption(f"Representa el {(row['monto']/total_gastos*100):.1f}% de tus gastos registrados.")
+                    c = info.get('color', 'blue')
+                    h = info.get('hack', 'Sin consejos por ahora.')
+                    if c == "red": st.error(f"💡 {h}")
+                    elif c == "orange": st.warning(f"💡 {h}")
+                    elif c == "green": st.success(f"💡 {h}")
+                    else: st.info(f"💡 {h}")
         else:
-            st.warning("No hay gastos registrados aún.")
+            st.info("No hay datos para auditar.")
 
     elif menu == "📊 Dashboard":
-        st.header("📊 Resumen Visual")
+        st.header("📊 Dashboard")
         if not df.empty:
             df_m = df[df['moneda'] == moneda_selec]
             if not df_m.empty:
-                col1, col2 = st.columns(2)
-                gastos = df_m[df_m['tipo'] == 'Gasto']
-                ingresos = df_m[df_m['tipo'] == 'Ingreso']
-                
-                col1.metric("Total Gastos", f"{moneda_selec} {gastos['monto'].sum():,.0f}")
-                col2.metric("Total Ingresos", f"{moneda_selec} {ingresos['monto'].sum():,.0f}")
-                
-                st.plotly_chart(px.pie(gastos, values='monto', names='categoria', title="Distribución de Gastos", hole=0.4))
+                st.plotly_chart(px.pie(df_m[df_m['tipo'] == 'Gasto'], values='monto', names='categoria', hole=0.5))
                 st.dataframe(df_m, use_container_width=True)
-            else:
-                st.info(f"No hay datos para la moneda {moneda_selec}")
 
-    elif menu == "✏️ Gestionar":
-        st.header("🛠️ Editar o Borrar")
+    elif menu == "✏️ Editar/Borrar":
+        st.header("⚙️ Gestión")
         if not df.empty:
-            seleccion = st.selectbox("Selecciona transacción:", df['descripcion'] + " - " + df['id'].astype(str))
-            id_sel = int(seleccion.split(" - ")[-1])
+            opc = {f"{r['descripcion']} ({r['id']})": r['id'] for _, r in df.iterrows()}
+            id_sel = opc[st.selectbox("Selecciona:", list(opc.keys()))]
             reg = df[df['id'] == id_sel].iloc[0]
-            
-            with st.form("edit_form"):
-                new_monto = st.number_input("Monto", value=float(reg['monto']))
-                new_desc = st.text_input("Descripción", value=reg['descripcion'])
+            with st.form("edit"):
+                n_m = st.number_input("Monto", value=float(reg['monto']))
+                n_d = st.text_input("Descripción", value=reg['descripcion'])
                 c1, c2 = st.columns(2)
                 if c1.form_submit_button("Actualizar"):
-                    supabase.table("transacciones").update({"monto": new_monto, "descripcion": new_desc}).eq("id", id_sel).execute()
+                    supabase.table("transacciones").update({"monto": n_m, "descripcion": n_d}).eq("id", id_sel).execute()
                     st.rerun()
                 if c2.form_submit_button("Eliminar"):
                     supabase.table("transacciones").delete().eq("id", id_sel).execute()
                     st.rerun()
 
-# --- FLUJO ---
+# --- CONTROL ---
 if 'auth' not in st.session_state: st.session_state.auth = False
 if not st.session_state.auth: mostrar_login()
 else: main()
