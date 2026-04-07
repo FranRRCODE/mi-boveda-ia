@@ -5,15 +5,22 @@ import plotly.express as px
 import requests
 import random
 import time
-from datetime import datetime
+import google.generativeai as genai  # <--- Nueva Librería
+import json
 
-# --- 1. CONFIGURACIÓN DE NUBE ---
+# --- 1. CONFIGURACIÓN DE NUBE Y IA ---
 try:
     URL_NUBE = st.secrets["SUPABASE_URL"]
     KEY_NUBE = st.secrets["SUPABASE_KEY"]
+    GEMINI_KEY = st.secrets["GEMINI_API_KEY"] # <--- Añadir en Secrets
+    
     supabase: Client = create_client(URL_NUBE, KEY_NUBE)
-except Exception:
-    st.error("⚠️ Configura tus Secrets en Streamlit Cloud.")
+    
+    # Configurar Gemini
+    genai.configure(api_key=GEMINI_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash') # Modelo rápido y eficiente
+except Exception as e:
+    st.error(f"⚠️ Error de configuración: {e}")
     st.stop()
 
 # --- 2. SEGURIDAD ---
@@ -24,67 +31,52 @@ PASSWORD_MASTER = "1234567899"
 @st.cache_data(ttl=3600)
 def obtener_geo():
     try:
-        headers = st.context.headers
-        user_ip = headers.get("X-Forwarded-For", "").split(",")[0]
-        res = requests.get(f"http://ip-api.com/json/{user_ip}").json()
+        res = requests.get("http://ip-api.com/json/").json()
         return {"ciudad": res.get("city", "Santiago"), "pais": res.get("country", "Chile"), "moneda": "CLP" if res.get("countryCode") == "CL" else "USD"}
     except: return {"ciudad": "Santiago", "pais": "Chile", "moneda": "CLP"}
 
-# --- 4. MOTOR DE IA AVANZADA (EL CEREBRO) ---
-def auditoria_ia_pro(row, total_gastos_mes, ciudad):
-    desc = row['descripcion'].lower()
+# --- 4. NUEVO MOTOR DE IA CON GEMINI ---
+def auditoria_ia_gemini(row, total_gastos_mes, ciudad):
+    """
+    Usa Google Gemini para analizar el gasto de forma fluida.
+    """
     monto = row['monto']
+    desc = row['descripcion']
     moneda = row['moneda']
     impacto = (monto / total_gastos_mes) * 100 if total_gastos_mes > 0 else 0
     
-    # Base de conocimiento de Mentoria
-    mentoria = {
-        "analisis": "Analizando gasto...",
-        "tipo": "Gasto General",
-        "hack": "Aplica la regla de las 48 horas antes de repetir este gasto.",
-        "color": "blue"
-    }
-
-    # Lógica de Reconocimiento por Contexto
-    if "pasaje" in desc or "bus" in desc or "turbus" in desc or "pullman" in desc:
-        mentoria = {
-            "tipo": "Logística y Viajes",
-            "analisis": f"Este pasaje representa el **{impacto:.1f}%** de tus gastos. Los viajes a Santiago suelen ser un costo fijo camuflado.",
-            "hack": "🇨🇱 **Hack Chile:** Compra pasajes los martes o miércoles por la App de Turbus/Pullman para obtener hasta un 30% de descuento. Si viajas seguido, inscríbete en programas de puntos.",
-            "color": "orange"
-        }
-    elif "starbucks" in desc or "cafe" in desc or "dunkin" in desc:
-        mentoria = {
-            "tipo": "Gasto Hormiga (Deseo)",
-            "analisis": f"Gasto de conveniencia. Aunque parece poco, un {impacto:.1f}% recurrente en café daña tu ahorro anual.",
-            "hack": "☕ **Ahorro:** Si compras café fuera 3 veces por semana, gastas unos $60,000 al mes. Una prensa francesa y café de grano te costarían $15,000 mensuales.",
-            "color": "red"
-        }
-    elif "super" in desc or "lider" in desc or "jumbo" in desc or "unimarc" in desc:
-        mentoria = {
-            "tipo": "Necesidad Básica",
-            "analisis": "Este es un gasto esencial. Es clave optimizarlo para liberar presupuesto.",
-            "hack": "🛒 **Hack:** En Chile, usa marcas propias (Líder/Great Value). Son un 40% más baratas. Evita comprar en 'horarios de hambre' para no sumar antojos.",
-            "color": "green"
-        }
-    elif "uber" in desc or "didi" in desc or "cabify" in desc:
-        mentoria = {
-            "tipo": "Transporte de Conveniencia",
-            "analisis": f"Has destinado un **{impacto:.1f}%** de tu presupuesto a este viaje. ¿Era una emergencia o comodidad?",
-            "hack": "🚗 **Comparador:** Siempre abre Uber y Didi al mismo tiempo. En Santiago, Didi suele ser $1.500 más barato en viajes cortos.",
-            "color": "orange"
-        }
-    elif "sexual" in desc or "pete" in desc:
-        mentoria = {
-            "tipo": "Entretenimiento Adulto",
-            "analisis": "Gasto discrecional de alto valor. No genera retorno pero consume liquidez inmediata.",
-            "hack": "⚠️ **Presupuesto:** Clasifica esto en un 'Fondo de Ocio'. Si el gasto supera el 10% de tus ingresos, estás comprometiendo tu estabilidad futura.",
-            "color": "purple"
+    # Prompt diseñado para obtener una respuesta estructurada
+    prompt = f"""
+    Eres un mentor financiero experto, sarcástico pero útil, basado en {ciudad}.
+    Analiza el siguiente gasto de un usuario:
+    - Descripción: "{desc}"
+    - Monto: {moneda} {monto}
+    - Porcentaje del gasto total del mes: {impacto:.2f}%
+    
+    Responde estrictamente en formato JSON con la siguiente estructura:
+    {{
+        "tipo": "Categoría creativa del gasto",
+        "analisis": "Un análisis corto y fluido de por qué este gasto importa o cómo afecta las finanzas.",
+        "hack": "Un consejo práctico, específico para Chile/Latam y nada genérico.",
+        "color": "red (si es crítico/hormiga), green (si es necesario), orange (si es transporte/logistica), blue (otros)"
+    }}
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        # Limpiar la respuesta por si Gemini añade ```json ... ```
+        texto_limpio = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(texto_limpio)
+    except Exception as e:
+        # Fallback en caso de error de la API
+        return {
+            "tipo": "Gasto General",
+            "analisis": f"No pude conectar con el cerebro de la IA, pero veo que gastaste {monto}.",
+            "hack": "Intenta registrar tus gastos con descripciones más claras.",
+            "color": "blue"
         }
 
-    return mentoria
-
-# --- 5. INTERFAZ LOGIN ---
+# --- 5. INTERFAZ LOGIN (Igual que antes) ---
 def mostrar_login():
     st.markdown("<h1 style='text-align: center;'>🔐 Bóveda IA Mentor Pro</h1>", unsafe_allow_html=True)
     if 'c_n1' not in st.session_state:
@@ -107,6 +99,7 @@ def main():
     
     menu = st.sidebar.radio("Navegación", ["➕ Registro Rápido", "🧠 Auditoría IA", "📊 Dashboard", "✏️ Editar / Borrar"])
 
+    # Obtener datos de Supabase
     res = supabase.table("transacciones").select("*").order("id", desc=True).execute()
     df = pd.DataFrame(res.data)
 
@@ -116,45 +109,50 @@ def main():
             tipo = st.selectbox("Tipo", ["Gasto", "Ingreso"])
             cat = st.selectbox("Categoría", ["Comida", "Vivienda", "Ocio", "Transporte", "Sueldo", "Otros"])
             monto = st.number_input("Monto", min_value=0.0)
-            desc = st.text_input("Descripción específica (Ej: Pasaje a Santiago)")
+            desc = st.text_input("Descripción específica (Ej: Starbucks de la mañana)")
             if st.form_submit_button("Guardar"):
                 if desc and monto > 0:
-                    supabase.table("transacciones").insert({"tipo": tipo, "categoria": cat, "monto": float(monto), "descripcion": desc, "ciudad": geo['ciudad'], "pais": geo['pais'], "moneda": moneda_selec}).execute()
-                    st.toast("Gasto registrado. Analizando...", icon="🧠")
+                    supabase.table("transacciones").insert({
+                        "tipo": tipo, "categoria": cat, "monto": float(monto), 
+                        "descripcion": desc, "ciudad": geo['ciudad'], 
+                        "pais": geo['pais'], "moneda": moneda_selec
+                    }).execute()
+                    st.toast("Gasto registrado. Gemini está pensando...", icon="🧠")
                     time.sleep(1)
                     st.success("✅ Guardado.")
                 else: st.error("Datos incompletos.")
 
     elif menu == "🧠 Auditoría IA":
-        st.header("🕵️ Auditoría Inteligente Pro")
+        st.header("🕵️ Auditoría con Gemini 1.5 Pro")
         if not df.empty:
             df_g = df[df['tipo'] == 'Gasto']
             total_gastos_mes = df_g['monto'].sum()
             
-            st.chat_message("assistant").write(f"¡Hola! He analizado tus últimos movimientos en **{geo['ciudad']}**. Abre cada gasto para ver tu plan de acción:")
+            st.chat_message("assistant").write(f"¡Hola! Soy tu mentor IA. He analizado tus últimos movimientos en **{geo['ciudad']}**. Haz clic en cada uno para ver mi análisis real:")
             
-            for _, row in df_g.head(10).iterrows():
-                # Obtener mentoria de la IA
-                info_ia = auditoria_ia_pro(row, total_gastos_mes, geo['ciudad'])
+            for _, row in df_g.head(8).iterrows():
+                # Llamada a Gemini
+                with st.spinner(f"Analizando '{row['descripcion']}'..."):
+                    info_ia = auditoria_ia_gemini(row, total_gastos_mes, geo['ciudad'])
                 
                 with st.popover(f"🔍 {row['descripcion']} ({row['moneda']} {row['monto']:,.0f})"):
-                    st.subheader(f"🏷️ {info_ia['tipo']}")
-                    st.write(info_ia['analisis'])
+                    st.subheader(f"🏷️ {info_ia.get('tipo', 'Gasto')}")
+                    st.write(info_ia.get('analisis', 'Sin análisis disponible.'))
                     
-                    if info_ia['color'] == "red":
-                        st.error(info_ia['hack'])
-                    elif info_ia['color'] == "orange":
-                        st.warning(info_ia['hack'])
-                    elif info_ia['color'] == "green":
-                        st.success(info_ia['hack'])
-                    else:
-                        st.info(info_ia['hack'])
+                    color = info_ia.get('color', 'blue')
+                    hack = info_ia.get('hack', 'No hay hacks por ahora.')
+                    
+                    if color == "red": st.error(hack)
+                    elif color == "orange": st.warning(hack)
+                    elif color == "green": st.success(hack)
+                    else: st.info(hack)
                         
-                    st.caption(f"Impacto en presupuesto: {(row['monto']/total_gastos_mes*100):.1f}%")
+                    st.caption(f"Impacto real: {(row['monto']/total_gastos_mes*100):.1f}% de tus gastos.")
         else:
             st.info("No hay datos para auditar.")
 
     elif menu == "📊 Dashboard":
+        # ... (Código de Dashboard igual que antes)
         st.header(f"Dashboard ({moneda_selec})")
         if not df.empty:
             df_m = df[df['moneda'] == moneda_selec]
@@ -163,10 +161,12 @@ def main():
                 st.dataframe(df_m, use_container_width=True)
 
     elif menu == "✏️ Editar / Borrar":
+        # ... (Código de Editar igual que antes)
         st.header("🛠️ Modificar Datos")
         if not df.empty:
             opciones = {f"{row['descripcion']} (${row['monto']}) | ID: {row['id']}": row['id'] for _, row in df.iterrows()}
-            id_edit = opciones[st.selectbox("Selecciona:", list(opciones.keys()))]
+            id_sel = st.selectbox("Selecciona:", list(opciones.keys()))
+            id_edit = opciones[id_sel]
             reg = df[df['id'] == id_edit].iloc[0]
             with st.form("edit"):
                 n_m = st.number_input("Monto", value=float(reg['monto']))
